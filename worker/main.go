@@ -25,6 +25,7 @@ type Job struct {
 	AudioURL  string    `json:"audio_url,omitempty"`
 	FormatID  string    `json:"format_id,omitempty"`
 	Container string    `json:"container,omitempty"`
+	Duration  int       `json:"duration_seconds,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -81,13 +82,16 @@ func invokeDownloader(baseURL string, job Job) (string, error) {
 	}
 	outputName := fmt.Sprintf("%s.%s", job.ID, ext)
 
-	fields := map[string]string{
+	fields := map[string]any{
 		"job_id": job.ID,
 		"url":    job.MediaURL,
 		"output": outputName,
 	}
 	if job.AudioURL != "" {
 		fields["audio_url"] = job.AudioURL
+	}
+	if job.Duration > 0 {
+		fields["duration_seconds"] = job.Duration
 	}
 	payload, err := json.Marshal(fields)
 	if err != nil {

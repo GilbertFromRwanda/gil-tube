@@ -99,6 +99,8 @@ async fn progress_handler(State(state): State<Arc<AppState>>, AxumPath(job_id): 
             let elapsed = handle.started_at.elapsed().as_secs_f64();
             let speed = if elapsed > 0.0 { downloaded as f64 / elapsed } else { 0.0 };
             let status = handle.status.read().await.clone();
+            let segments = handle.segments.read().await.clone();
+            let mux_progress_percent = handle.mux_progress_percent.load(Ordering::Relaxed);
             (
                 axum::http::StatusCode::OK,
                 Json(serde_json::json!({
@@ -107,6 +109,8 @@ async fn progress_handler(State(state): State<Arc<AppState>>, AxumPath(job_id): 
                     "bytes_downloaded": downloaded,
                     "bytes_total": if total >= 0 { serde_json::json!(total) } else { serde_json::Value::Null },
                     "speed_bytes_per_second": speed,
+                    "segments": segments,
+                    "mux_progress_percent": mux_progress_percent,
                 })),
             )
                 .into_response()
@@ -194,7 +198,7 @@ async fn run_cli(url_arg: String, output_arg: String) {
         }
     };
 
-    match download::execute_download(state, "cli".to_string(), url, None, PathBuf::from(&output_arg)).await {
+    match download::execute_download(state, "cli".to_string(), url, None, PathBuf::from(&output_arg), None).await {
         Ok(resp) => println!("{}", serde_json::to_string_pretty(&resp).unwrap()),
         Err(err) => {
             eprintln!("{}: {}", err.code(), err.message());

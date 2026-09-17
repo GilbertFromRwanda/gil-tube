@@ -52,6 +52,12 @@ pub struct JobHandle {
     pub cancelled: AtomicBool,
     pub status: RwLock<String>,
     pub started_at: Instant,
+    /// Per-connection bytes downloaded so far in the current phase (one
+    /// entry per worker when chunked, a single entry when sequential).
+    /// Reset at the start of each phase (video stream, then audio stream).
+    pub segments: RwLock<Vec<u64>>,
+    /// 0-100 while `status` is "MUXING"; meaningless otherwise.
+    pub mux_progress_percent: AtomicU64,
 }
 
 impl JobHandle {
@@ -62,7 +68,24 @@ impl JobHandle {
             cancelled: AtomicBool::new(false),
             status: RwLock::new("DOWNLOADING".to_string()),
             started_at: Instant::now(),
+            segments: RwLock::new(Vec::new()),
+            mux_progress_percent: AtomicU64::new(0),
         }
+    }
+
+    async fn reset_segments(&self, count: usize) {
+        *self.segments.write().await = vec![0u64; count];
+    }
+
+    async fn add_segment_bytes(&self, index: usize, bytes: u64) {
+        let mut segments = self.segments.write().await;
+        if let Some(slot) = segments.get_mut(index) {
+            *slot += bytes;
+        }
+    }
+
+    async fn set_status(&self, status: &str) {
+        *self.status.write().await = status.to_string();
     }
 }
 
@@ -104,6 +127,11 @@ pub struct DownloadRequest {
     /// combines them here.
     #[serde(default)]
     pub audio_url: Option<String>,
+    /// Total media duration in seconds, used only to compute a percentage
+    /// for the ffmpeg mux phase (`out_time` / duration). Omit or leave null
+    /// if unknown; the mux still runs, it just won't report a percentage.
+    #[serde(default)]
+    pub duration_seconds: Option<f64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -203,10 +231,34 @@ fn sibling_path(target: &Path, suffix: &str) -> PathBuf {
 
 const MUX_TIMEOUT: Duration = Duration::from_secs(600);
 
+/// Parses ffmpeg's `-progress` timestamp format (`HH:MM:SS.ffffff`) into
+/// total seconds.
+fn parse_ffmpeg_time(s: &str) -> Option<f64> {
+    let mut parts = s.trim().splitn(3, ':');
+    let hours: f64 = parts.next()?.parse().ok()?;
+    let minutes: f64 = parts.next()?.parse().ok()?;
+    let seconds: f64 = parts.next()?.parse().ok()?;
+    Some(hours * 3600.0 + minutes * 60.0 + seconds)
+}
+
 /// Muxes a video-only and audio-only stream into a single output file with
 /// ffmpeg, using a codec copy (no re-encoding). The output container is
-/// inferred by ffmpeg from `output_path`'s extension.
-async fn mux_with_ffmpeg(video_path: &Path, audio_path: &Path, output_path: &Path) -> Result<(), DownloadError> {
+/// inferred by ffmpeg from `output_path`'s extension. Reports live progress
+/// on `handle.mux_progress_percent` by parsing ffmpeg's machine-readable
+/// `-progress` stream against the known media `duration_seconds`; if the
+/// duration is unknown, the mux still runs, it just won't report a percent.
+async fn mux_with_ffmpeg(
+    video_path: &Path,
+    audio_path: &Path,
+    output_path: &Path,
+    duration_seconds: Option<f64>,
+    handle: &Arc<JobHandle>,
+) -> Result<(), DownloadError> {
+    use tokio::io::{AsyncBufReadExt, BufReader};
+
+    handle.set_status("MUXING").await;
+    handle.mux_progress_percent.store(0, Ordering::Relaxed);
+
     let mut cmd = tokio::process::Command::new("ffmpeg");
     cmd.arg("-y")
         .arg("-i")
@@ -224,24 +276,62 @@ async fn mux_with_ffmpeg(video_path: &Path, audio_path: &Path, output_path: &Pat
     ) {
         cmd.arg("-movflags").arg("+faststart");
     }
+    cmd.arg("-progress").arg("pipe:1").arg("-nostats");
     cmd.arg(output_path);
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
 
-    let run = tokio::time::timeout(MUX_TIMEOUT, cmd.output()).await;
-    let output = match run {
-        Ok(Ok(output)) => output,
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| DownloadError::ProcessingFailed(format!("could not run ffmpeg: {e}")))?;
+
+    let stdout = child.stdout.take().expect("ffmpeg stdout was piped");
+    let stderr = child.stderr.take().expect("ffmpeg stderr was piped");
+
+    let progress_handle = handle.clone();
+    let progress_task = tokio::spawn(async move {
+        let mut lines = BufReader::new(stdout).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            if let Some(rest) = line.strip_prefix("out_time=") {
+                if let (Some(elapsed), Some(total)) = (parse_ffmpeg_time(rest), duration_seconds) {
+                    if total > 0.0 {
+                        let percent = (elapsed / total * 100.0).clamp(0.0, 100.0) as u64;
+                        progress_handle.mux_progress_percent.store(percent, Ordering::Relaxed);
+                    }
+                }
+            }
+        }
+    });
+
+    let stderr_task = tokio::spawn(async move {
+        let mut lines = BufReader::new(stderr).lines();
+        let mut collected = String::new();
+        while let Ok(Some(line)) = lines.next_line().await {
+            collected.push_str(&line);
+            collected.push('\n');
+        }
+        collected
+    });
+
+    let wait_result = tokio::time::timeout(MUX_TIMEOUT, child.wait()).await;
+    let _ = progress_task.await;
+    let stderr_output = stderr_task.await.unwrap_or_default();
+
+    let status = match wait_result {
+        Ok(Ok(status)) => status,
         Ok(Err(e)) => return Err(DownloadError::ProcessingFailed(format!("could not run ffmpeg: {e}"))),
-        Err(_) => return Err(DownloadError::ProcessingFailed("ffmpeg mux timed out".to_string())),
+        Err(_) => {
+            let _ = child.kill().await;
+            return Err(DownloadError::ProcessingFailed("ffmpeg mux timed out".to_string()));
+        }
     };
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let last_line = stderr.lines().last().unwrap_or_default();
-        return Err(DownloadError::ProcessingFailed(format!(
-            "ffmpeg exited with {}: {}",
-            output.status, last_line
-        )));
+    if !status.success() {
+        let last_line = stderr_output.lines().last().unwrap_or_default();
+        return Err(DownloadError::ProcessingFailed(format!("ffmpeg exited with {status}: {last_line}")));
     }
 
+    handle.mux_progress_percent.store(100, Ordering::Relaxed);
     Ok(())
 }
 
@@ -269,7 +359,7 @@ pub async fn handle_download_request(
         }
         _ => None,
     };
-    execute_download(state, req.job_id, url, audio_url, target_path).await
+    execute_download(state, req.job_id, url, audio_url, target_path, req.duration_seconds).await
 }
 
 /// Runs a download to an already-resolved absolute path. Used both by the
@@ -283,6 +373,7 @@ pub async fn execute_download(
     url: url::Url,
     audio_url: Option<url::Url>,
     target_path: PathBuf,
+    duration_seconds: Option<f64>,
 ) -> Result<DownloadResponse, DownloadError> {
     let parent = target_path
         .parent()
@@ -307,7 +398,7 @@ pub async fn execute_download(
         }
     };
 
-    let result = run_pipeline(&state, &url, audio_url.as_ref(), &target_path, &handle, &job_id).await;
+    let result = run_pipeline(&state, &url, audio_url.as_ref(), &target_path, &handle, &job_id, duration_seconds).await;
 
     state.jobs.write().await.remove(&job_id);
 
@@ -337,6 +428,7 @@ async fn run_pipeline(
     target_path: &Path,
     handle: &Arc<JobHandle>,
     job_id: &str,
+    duration_seconds: Option<f64>,
 ) -> Result<(), DownloadError> {
     match audio_url {
         None => {
@@ -357,7 +449,7 @@ async fn run_pipeline(
             .await;
 
             let result = match download_result {
-                Ok(()) => mux_with_ffmpeg(&video_part, &audio_part, target_path).await,
+                Ok(()) => mux_with_ffmpeg(&video_part, &audio_part, target_path, duration_seconds, handle).await,
                 Err(err) => Err(err),
             };
 
@@ -497,6 +589,7 @@ async fn attempt_download_chunked(
 ) -> Result<(), DownloadError> {
     handle.bytes_total.store(total_size as i64, Ordering::Relaxed);
     handle.bytes_downloaded.store(0, Ordering::Relaxed);
+    handle.reset_segments(worker_count).await;
 
     {
         let file = tokio::fs::OpenOptions::new()
@@ -522,7 +615,7 @@ async fn attempt_download_chunked(
     let failed = Arc::new(AtomicBool::new(false));
 
     let mut tasks = Vec::with_capacity(worker_count);
-    for _ in 0..worker_count {
+    for worker_index in 0..worker_count {
         let client = state.client.clone();
         let url = url.clone();
         let path = part_path.to_path_buf();
@@ -530,7 +623,7 @@ async fn attempt_download_chunked(
         let queue = queue.clone();
         let failed = failed.clone();
         tasks.push(tokio::spawn(async move {
-            download_worker(client, url, path, handle, queue, failed).await
+            download_worker(client, url, path, handle, queue, failed, worker_index).await
         }));
     }
 
@@ -562,6 +655,7 @@ async fn download_worker(
     handle: Arc<JobHandle>,
     queue: Arc<Mutex<VecDeque<(u64, u64)>>>,
     failed: Arc<AtomicBool>,
+    worker_index: usize,
 ) -> Result<(), DownloadError> {
     loop {
         if failed.load(Ordering::Relaxed) || handle.cancelled.load(Ordering::Relaxed) {
@@ -571,7 +665,7 @@ async fn download_worker(
         let next = { queue.lock().await.pop_front() };
         let Some((start, end)) = next else { return Ok(()) };
 
-        if let Err(err) = download_granule(&client, &url, &path, start, end, &handle).await {
+        if let Err(err) = download_granule(&client, &url, &path, start, end, &handle, worker_index).await {
             failed.store(true, Ordering::Relaxed);
             return Err(err);
         }
@@ -588,6 +682,7 @@ async fn download_granule(
     start: u64,
     end: u64,
     handle: &Arc<JobHandle>,
+    worker_index: usize,
 ) -> Result<(), DownloadError> {
     const GRANULE_MAX_ATTEMPTS: u32 = 5;
     let mut attempt = 0u32;
@@ -598,7 +693,7 @@ async fn download_granule(
             return Err(DownloadError::Cancelled);
         }
 
-        match download_granule_once(client, url, path, &mut cursor, end, handle).await {
+        match download_granule_once(client, url, path, &mut cursor, end, handle, worker_index).await {
             Ok(()) => return Ok(()),
             Err(DownloadError::Cancelled) => return Err(DownloadError::Cancelled),
             Err(err) if attempt >= GRANULE_MAX_ATTEMPTS || !is_retryable(&err) => return Err(err),
@@ -614,6 +709,7 @@ async fn download_granule_once(
     cursor: &mut u64,
     end: u64,
     handle: &Arc<JobHandle>,
+    worker_index: usize,
 ) -> Result<(), DownloadError> {
     if *cursor > end {
         return Ok(()); // fully written by an earlier attempt already
@@ -660,6 +756,7 @@ async fn download_granule_once(
             .map_err(|e| DownloadError::Failed(format!("write failed: {e}"), false))?;
         *cursor += bytes.len() as u64;
         handle.bytes_downloaded.fetch_add(bytes.len() as u64, Ordering::Relaxed);
+        handle.add_segment_bytes(worker_index, bytes.len() as u64).await;
     }
 
     let _ = file.flush().await;
@@ -717,6 +814,8 @@ async fn attempt_download_sequential(
         .map_err(|e| DownloadError::Failed(format!("could not seek output file: {e}"), false))?;
 
     handle.bytes_downloaded.store(resume_offset, Ordering::Relaxed);
+    handle.reset_segments(1).await;
+    handle.add_segment_bytes(0, resume_offset).await;
 
     let mut stream = response.bytes_stream();
     loop {
@@ -741,6 +840,7 @@ async fn attempt_download_sequential(
             .await
             .map_err(|e| DownloadError::Failed(format!("write failed: {e}"), false))?;
         handle.bytes_downloaded.store(written, Ordering::Relaxed);
+        handle.add_segment_bytes(0, chunk.len() as u64).await;
     }
 
     let _ = file.flush().await;
