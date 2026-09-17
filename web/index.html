@@ -41,7 +41,7 @@
         border-bottom: 1px solid var(--border);
       }
       .topbar-inner {
-        width: min(1100px, 100%);
+        width: min(1240px, 100%);
         margin: 0 auto;
         padding: 0.85rem 1rem;
         display: flex;
@@ -75,7 +75,7 @@
         .topbar-search { flex-basis: 100%; }
       }
       .app {
-        width: min(1100px, 100%);
+        width: min(1240px, 100%);
         display: flex;
         flex-direction: column;
         gap: 1.4rem;
@@ -92,7 +92,7 @@
         }
         .layout-main { flex: 1 1 auto; min-width: 0; }
         .layout-side {
-          flex: 0 0 360px;
+          flex: 0 0 440px;
           position: sticky;
           top: 1.5rem;
         }
@@ -161,8 +161,8 @@
       .search-results {
         margin-top: 1.1rem;
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-        gap: 14px;
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+        gap: 16px;
       }
       .result-card {
         cursor: pointer;
@@ -239,6 +239,18 @@
         color: var(--text);
       }
       button.secondary:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); filter: none; }
+      .link-button {
+        align-self: flex-start;
+        background: none;
+        border: none;
+        color: var(--muted);
+        padding: 0.2rem 0;
+        font-weight: 600;
+        font-size: 0.85rem;
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+      .link-button:hover:not(:disabled) { color: var(--primary); background: none; filter: none; }
       .hidden { display: none !important; }
       .error-banner {
         background: rgba(248, 113, 113, 0.12);
@@ -405,8 +417,9 @@
         <div class="layout-main">
           <div id="searchResults" class="search-results hidden"></div>
 
-          <div class="card">
-            <p class="subtitle" style="margin-bottom: 0.9rem;">Or paste a link directly:</p>
+          <button id="pasteLinkToggle" class="link-button" type="button">+ Paste a link directly</button>
+
+          <div id="pasteLinkCard" class="card hidden">
             <form id="loadForm" class="url-form">
               <input id="urlInput" type="url" placeholder="https://www.youtube.com/watch?v=..." required />
               <button id="loadButton" type="submit">Load</button>
@@ -466,10 +479,20 @@
       const searchError = document.getElementById('searchError');
       const searchResults = document.getElementById('searchResults');
 
+      const pasteLinkToggle = document.getElementById('pasteLinkToggle');
+      const pasteLinkCard = document.getElementById('pasteLinkCard');
+
       const loadForm = document.getElementById('loadForm');
       const urlInput = document.getElementById('urlInput');
       const loadButton = document.getElementById('loadButton');
       const loadError = document.getElementById('loadError');
+
+      pasteLinkToggle.addEventListener('click', () => {
+        const willShow = pasteLinkCard.classList.contains('hidden');
+        pasteLinkCard.classList.toggle('hidden', !willShow);
+        pasteLinkToggle.textContent = willShow ? '− Hide link field' : '+ Paste a link directly';
+        if (willShow) urlInput.focus();
+      });
 
       const previewCard = document.getElementById('previewCard');
       const previewEmbed = document.getElementById('previewEmbed');
