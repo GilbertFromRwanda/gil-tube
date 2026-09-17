@@ -495,8 +495,11 @@ async fn download_with_retries(
 }
 
 /// Minimum file size worth splitting into parallel range requests; below
-/// this, connection-setup overhead outweighs any speedup.
-const MIN_CHUNKED_SIZE: u64 = 8 * 1024 * 1024;
+/// this, connection-setup overhead outweighs any speedup. Kept low (rather
+/// than e.g. 8 MiB) because audio-only tracks are commonly a few MB and
+/// benefit from parallelism just as much as video when a single connection
+/// is throttled well below the link's real capacity.
+const MIN_CHUNKED_SIZE: u64 = 2 * 1024 * 1024;
 
 struct RangeProbe {
     total_size: u64,
@@ -568,7 +571,7 @@ async fn attempt_download(
 /// more of them than slower ones — a lightweight form of IDM's dynamic
 /// segmentation, without the added complexity of stealing and re-splitting
 /// a range that's already in flight on another connection.
-const GRANULE_SIZE: u64 = 2 * 1024 * 1024;
+const GRANULE_SIZE: u64 = 1024 * 1024;
 
 /// Splits `total_size` into small granules placed on a shared queue and
 /// fetched by `worker_count` persistent workers pulling from it, each

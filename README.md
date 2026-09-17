@@ -87,7 +87,7 @@ This repository is intentionally a working foundation rather than a full product
 | api | `EXTRACTOR_URL`, `DOWNLOADER_URL` | Upstream service addresses |
 | api | `ALLOWED_ORIGIN` | CORS origin allowed to call the API (default `http://localhost:3000`) |
 | extractor | `REDIS_URL` | Extraction cache backend; falls back to in-memory if unset/unreachable |
-| downloader | `MAX_CHUNKS_PER_DOWNLOAD` | Parallel range requests per stream when the server supports it (default 4) |
+| downloader | `MAX_CHUNKS_PER_DOWNLOAD` | Parallel range requests per stream when the server supports it (default 8) |
 | downloader | `MAX_DOWNLOAD_BYTES`, `MAX_GLOBAL_CONCURRENCY` | Size cap and concurrent-download limit |
 
 ## Security note

@@ -108,7 +108,7 @@ services:
       DOWNLOAD_OUTPUT_DIR: /data/downloads
       MAX_GLOBAL_CONCURRENCY: "8"
       MAX_DOWNLOAD_BYTES: "5368709120"
-      MAX_CHUNKS_PER_DOWNLOAD: "4"
+      MAX_CHUNKS_PER_DOWNLOAD: "8"
       RUST_LOG: "info"
     volumes:
       - downloads_data:/data/downloads
