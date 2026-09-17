@@ -1,0 +1,123 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: gil-tube-postgres
+    environment:
+      POSTGRES_DB: gil_tube
+      POSTGRES_USER: gil_tube
+      POSTGRES_PASSWORD: gil_tube
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gil_tube -d gil_tube"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: gil-tube-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  nats:
+    image: nats:2.10-alpine
+    container_name: gil-tube-nats
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8222/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  extractor:
+    build: ./extractor
+    container_name: gil-tube-extractor
+    ports:
+      - "9000:9000"
+    environment:
+      PYTHONUNBUFFERED: "1"
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9000/health').read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: ./api
+    container_name: gil-tube-api
+    ports:
+      - "8081:8080"
+    environment:
+      EXTRACTOR_URL: http://extractor:9000
+      DOWNLOADER_URL: http://downloader:8000
+      DATABASE_URL: postgres://gil_tube:gil_tube@postgres:5432/gil_tube?sslmode=disable
+      NATS_URL: nats://nats:4222
+      ALLOWED_ORIGIN: http://localhost:3000
+      GIN_MODE: release
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      extractor:
+        condition: service_healthy
+      downloader:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  worker:
+    build: ./worker
+    container_name: gil-tube-worker
+    environment:
+      DATABASE_URL: postgres://gil_tube:gil_tube@postgres:5432/gil_tube?sslmode=disable
+      NATS_URL: nats://nats:4222
+      DOWNLOADER_URL: http://downloader:8000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      downloader:
+        condition: service_started
+
+  downloader:
+    build: ./downloader
+    container_name: gil-tube-downloader
+    ports:
+      - "8000:8000"
+    environment:
+      DOWNLOAD_OUTPUT_DIR: /data/downloads
+      MAX_GLOBAL_CONCURRENCY: "8"
+      MAX_DOWNLOAD_BYTES: "5368709120"
+      MAX_CHUNKS_PER_DOWNLOAD: "4"
+      RUST_LOG: "info"
+    volumes:
+      - downloads_data:/data/downloads
+    healthcheck:
+      test: ["CMD", "/app/target/release/gil-tube-downloader", "--healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:
+  downloads_data:

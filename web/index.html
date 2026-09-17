@@ -1,0 +1,497 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Gil Tube</title>
+    <style>
+      :root {
+        --bg: #0f172a;
+        --panel: #111827;
+        --panel-alt: #0b1220;
+        --text: #e5e7eb;
+        --muted: #94a3b8;
+        --primary: #38bdf8;
+        --primary-strong: #0ea5e9;
+        --success: #22c55e;
+        --danger: #f87171;
+        --border: #1f2937;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: -apple-system, Segoe UI, Arial, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        min-height: 100vh;
+        display: flex;
+        justify-content: center;
+        padding: 2.5rem 1rem;
+      }
+      .app {
+        width: min(720px, 100%);
+        display: flex;
+        flex-direction: column;
+        gap: 1.25rem;
+      }
+      h1 {
+        margin: 0 0 0.25rem;
+        font-size: 1.6rem;
+      }
+      .subtitle {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 1.5rem;
+      }
+      form.url-form {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      input, select, button {
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        font-size: 0.95rem;
+        font-family: inherit;
+      }
+      input[type="url"] {
+        flex: 1 1 380px;
+        padding: 0.85rem 1rem;
+        background: var(--panel-alt);
+        color: var(--text);
+      }
+      select {
+        flex: 1 1 220px;
+        padding: 0.7rem 0.9rem;
+        background: var(--panel-alt);
+        color: var(--text);
+      }
+      button {
+        padding: 0.85rem 1.25rem;
+        background: var(--primary);
+        color: #082f49;
+        font-weight: 600;
+        cursor: pointer;
+        border: none;
+      }
+      button:hover:not(:disabled) { background: var(--primary-strong); }
+      button:disabled { opacity: 0.5; cursor: not-allowed; }
+      button.secondary {
+        background: transparent;
+        border: 1px solid var(--border);
+        color: var(--text);
+      }
+      button.secondary:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
+      .hidden { display: none !important; }
+      .error-banner {
+        background: rgba(248, 113, 113, 0.12);
+        border: 1px solid var(--danger);
+        color: var(--danger);
+        border-radius: 10px;
+        padding: 0.75rem 1rem;
+        font-size: 0.9rem;
+      }
+      .preview-embed {
+        position: relative;
+        width: 100%;
+        padding-top: 56.25%;
+        border-radius: 12px;
+        overflow: hidden;
+        background: #000;
+        margin-bottom: 1rem;
+      }
+      .preview-embed iframe {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        border: 0;
+      }
+      .preview-meta h2 {
+        margin: 0 0 0.35rem;
+        font-size: 1.15rem;
+      }
+      .preview-meta p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.88rem;
+      }
+      .format-row {
+        display: flex;
+        gap: 10px;
+        margin-top: 1.1rem;
+        flex-wrap: wrap;
+      }
+      .status-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 0.9rem;
+      }
+      .status-pill {
+        display: inline-block;
+        padding: 0.25rem 0.7rem;
+        border-radius: 999px;
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0.03em;
+        background: rgba(56, 189, 248, 0.15);
+        color: var(--primary);
+      }
+      .status-pill.completed { background: rgba(34, 197, 94, 0.15); color: var(--success); }
+      .status-pill.failed, .status-pill.cancelled { background: rgba(248, 113, 113, 0.15); color: var(--danger); }
+      .progress-track {
+        width: 100%;
+        height: 10px;
+        border-radius: 999px;
+        background: var(--panel-alt);
+        overflow: hidden;
+      }
+      .progress-fill {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, var(--primary), var(--primary-strong));
+        transition: width 0.3s ease;
+      }
+      .progress-fill.indeterminate {
+        width: 35%;
+        animation: slide 1.2s ease-in-out infinite;
+      }
+      @keyframes slide {
+        0% { margin-left: -35%; }
+        100% { margin-left: 100%; }
+      }
+      .progress-stats {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 0.5rem;
+        font-size: 0.82rem;
+        color: var(--muted);
+      }
+      .result-row {
+        margin-top: 1rem;
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+      a.download-link {
+        display: inline-block;
+        padding: 0.85rem 1.25rem;
+        border-radius: 10px;
+        background: var(--success);
+        color: #05230f;
+        font-weight: 700;
+        text-decoration: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <div>
+        <h1>Gil Tube</h1>
+        <p class="subtitle">Paste a link you're authorized to download, preview it, then download.</p>
+      </div>
+
+      <div class="card">
+        <form id="loadForm" class="url-form">
+          <input id="urlInput" type="url" placeholder="https://www.youtube.com/watch?v=..." required />
+          <button id="loadButton" type="submit">Load</button>
+        </form>
+        <div id="loadError" class="error-banner hidden" style="margin-top: 0.9rem;"></div>
+      </div>
+
+      <div id="previewCard" class="card hidden">
+        <div id="previewEmbed" class="preview-embed hidden">
+          <iframe id="previewIframe" src="" allowfullscreen></iframe>
+        </div>
+        <div class="preview-meta">
+          <h2 id="previewTitle"></h2>
+          <p id="previewSub"></p>
+        </div>
+        <div class="format-row">
+          <select id="formatSelect"></select>
+          <button id="downloadButton" type="button">Download</button>
+        </div>
+      </div>
+
+      <div id="jobCard" class="card hidden">
+        <div class="status-row">
+          <span id="statusPill" class="status-pill">QUEUED</span>
+          <button id="cancelButton" class="secondary" type="button">Cancel</button>
+        </div>
+        <div class="progress-track">
+          <div id="progressFill" class="progress-fill indeterminate"></div>
+        </div>
+        <div class="progress-stats">
+          <span id="progressBytes">0 B</span>
+          <span id="progressSpeed"></span>
+        </div>
+        <div id="resultRow" class="result-row hidden"></div>
+      </div>
+    </div>
+
+    <script>
+      const API_BASE = 'http://localhost:8081';
+
+      const loadForm = document.getElementById('loadForm');
+      const urlInput = document.getElementById('urlInput');
+      const loadButton = document.getElementById('loadButton');
+      const loadError = document.getElementById('loadError');
+
+      const previewCard = document.getElementById('previewCard');
+      const previewEmbed = document.getElementById('previewEmbed');
+      const previewIframe = document.getElementById('previewIframe');
+      const previewTitle = document.getElementById('previewTitle');
+      const previewSub = document.getElementById('previewSub');
+      const formatSelect = document.getElementById('formatSelect');
+      const downloadButton = document.getElementById('downloadButton');
+
+      const jobCard = document.getElementById('jobCard');
+      const statusPill = document.getElementById('statusPill');
+      const cancelButton = document.getElementById('cancelButton');
+      const progressFill = document.getElementById('progressFill');
+      const progressBytes = document.getElementById('progressBytes');
+      const progressSpeed = document.getElementById('progressSpeed');
+      const resultRow = document.getElementById('resultRow');
+
+      let currentURL = '';
+      let pollTimer = null;
+      let currentJobId = null;
+
+      function showError(message) {
+        loadError.textContent = message;
+        loadError.classList.remove('hidden');
+      }
+
+      function clearError() {
+        loadError.classList.add('hidden');
+        loadError.textContent = '';
+      }
+
+      function formatBytes(bytes) {
+        if (bytes === null || bytes === undefined) return '0 B';
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        let value = bytes;
+        let unitIndex = 0;
+        while (value >= 1024 && unitIndex < units.length - 1) {
+          value /= 1024;
+          unitIndex += 1;
+        }
+        return `${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+      }
+
+      function formatDuration(totalSeconds) {
+        if (!totalSeconds && totalSeconds !== 0) return '';
+        const seconds = Math.floor(totalSeconds % 60);
+        const minutes = Math.floor(totalSeconds / 60) % 60;
+        const hours = Math.floor(totalSeconds / 3600);
+        const pad = (n) => String(n).padStart(2, '0');
+        return hours > 0 ? `${hours}:${pad(minutes)}:${pad(seconds)}` : `${minutes}:${pad(seconds)}`;
+      }
+
+      function formatLabel(format) {
+        const parts = [];
+        if (format.height) parts.push(`${format.height}p`);
+        else parts.push('audio');
+        if (format.container) parts.push(format.container);
+        if (format.filesize) parts.push(formatBytes(format.filesize));
+        return `${parts.join(' · ')} (${format.id})`;
+      }
+
+      loadForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        clearError();
+        previewCard.classList.add('hidden');
+        jobCard.classList.add('hidden');
+
+        const url = urlInput.value.trim();
+        if (!url) return;
+
+        loadButton.disabled = true;
+        loadButton.textContent = 'Loading…';
+
+        try {
+          const response = await fetch(`${API_BASE}/api/v1/preview`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url }),
+          });
+          const data = await response.json();
+
+          if (!response.ok) {
+            const message = data && data.error ? data.error.message : 'Could not load this URL.';
+            showError(message);
+            return;
+          }
+
+          currentURL = url;
+          renderPreview(data);
+        } catch (err) {
+          showError(`Connection error: ${err.message}`);
+        } finally {
+          loadButton.disabled = false;
+          loadButton.textContent = 'Load';
+        }
+      });
+
+      function renderPreview(info) {
+        previewTitle.textContent = info.title || 'Untitled';
+        const metaParts = [];
+        if (info.duration) metaParts.push(formatDuration(info.duration));
+        if (info.uploader) metaParts.push(info.uploader);
+        previewSub.textContent = metaParts.join(' · ');
+
+        if (info.id) {
+          previewIframe.src = `https://www.youtube.com/embed/${encodeURIComponent(info.id)}`;
+          previewEmbed.classList.remove('hidden');
+        } else {
+          previewEmbed.classList.add('hidden');
+        }
+
+        const formats = (info.formats || []).filter((f) => f.id && (f.height || f.container));
+        formats.sort((a, b) => (b.height || 0) - (a.height || 0));
+
+        formatSelect.innerHTML = '';
+        const bestOption = document.createElement('option');
+        bestOption.value = '';
+        bestOption.textContent = 'Best available';
+        formatSelect.appendChild(bestOption);
+        for (const format of formats) {
+          const option = document.createElement('option');
+          option.value = format.id;
+          option.textContent = formatLabel(format);
+          formatSelect.appendChild(option);
+        }
+
+        previewCard.classList.remove('hidden');
+      }
+
+      downloadButton.addEventListener('click', async () => {
+        clearError();
+        downloadButton.disabled = true;
+        downloadButton.textContent = 'Starting…';
+
+        try {
+          const response = await fetch(`${API_BASE}/api/v1/jobs`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: currentURL, format: formatSelect.value || undefined }),
+          });
+          const data = await response.json();
+
+          if (!response.ok) {
+            const message = data && data.error ? data.error.message : 'Could not start the download.';
+            showError(message);
+            return;
+          }
+
+          startJobTracking(data.job_id);
+        } catch (err) {
+          showError(`Connection error: ${err.message}`);
+        } finally {
+          downloadButton.disabled = false;
+          downloadButton.textContent = 'Download';
+        }
+      });
+
+      function startJobTracking(jobId) {
+        currentJobId = jobId;
+        jobCard.classList.remove('hidden');
+        resultRow.classList.add('hidden');
+        resultRow.innerHTML = '';
+        cancelButton.classList.remove('hidden');
+        cancelButton.disabled = false;
+        setStatus('QUEUED');
+        progressFill.classList.add('indeterminate');
+        progressFill.style.width = '';
+        progressBytes.textContent = '0 B';
+        progressSpeed.textContent = '';
+
+        if (pollTimer) clearInterval(pollTimer);
+        pollTimer = setInterval(() => pollJob(jobId), 1000);
+        pollJob(jobId);
+      }
+
+      function setStatus(status) {
+        statusPill.textContent = status;
+        statusPill.className = 'status-pill';
+        if (status === 'COMPLETED') statusPill.classList.add('completed');
+        if (status === 'FAILED' || status === 'CANCELLED') statusPill.classList.add('failed');
+      }
+
+      async function pollJob(jobId) {
+        try {
+          const [jobRes, progressRes] = await Promise.all([
+            fetch(`${API_BASE}/api/v1/jobs/${jobId}`),
+            fetch(`${API_BASE}/api/v1/jobs/${jobId}/progress`),
+          ]);
+          const job = await jobRes.json();
+          const progress = await progressRes.json();
+
+          if (jobId !== currentJobId) return;
+
+          setStatus(job.status);
+
+          const downloaded = progress.bytes_downloaded || 0;
+          const total = progress.bytes_total;
+          if (total) {
+            progressFill.classList.remove('indeterminate');
+            progressFill.style.width = `${Math.min(100, (downloaded / total) * 100).toFixed(1)}%`;
+            progressBytes.textContent = `${formatBytes(downloaded)} / ${formatBytes(total)}`;
+          } else {
+            progressFill.classList.add('indeterminate');
+            progressBytes.textContent = formatBytes(downloaded);
+          }
+          progressSpeed.textContent = progress.speed_bytes_per_second
+            ? `${formatBytes(progress.speed_bytes_per_second)}/s`
+            : '';
+
+          if (['COMPLETED', 'FAILED', 'CANCELLED'].includes(job.status)) {
+            clearInterval(pollTimer);
+            pollTimer = null;
+            cancelButton.classList.add('hidden');
+            renderFinal(job);
+          }
+        } catch (err) {
+          // Transient network hiccup while polling; keep trying on the next tick.
+        }
+      }
+
+      function renderFinal(job) {
+        resultRow.classList.remove('hidden');
+        if (job.status === 'COMPLETED') {
+          progressFill.classList.remove('indeterminate');
+          progressFill.style.width = '100%';
+          const link = document.createElement('a');
+          link.className = 'download-link';
+          link.href = `${API_BASE}/api/v1/jobs/${job.job_id}/file`;
+          link.textContent = 'Save file';
+          resultRow.appendChild(link);
+        } else {
+          const message = document.createElement('span');
+          message.style.color = 'var(--danger)';
+          message.textContent = job.error_message
+            ? `${job.status}: ${job.error_message}`
+            : job.status;
+          resultRow.appendChild(message);
+        }
+      }
+
+      cancelButton.addEventListener('click', async () => {
+        if (!currentJobId) return;
+        cancelButton.disabled = true;
+        try {
+          await fetch(`${API_BASE}/api/v1/jobs/${currentJobId}/cancel`, { method: 'POST' });
+        } catch (err) {
+          // Ignore: the next poll tick will reflect whatever state actually won.
+        }
+      });
+    </script>
+  </body>
+</html>

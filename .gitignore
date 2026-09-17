@@ -1,0 +1,38 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Node
+node_modules/
+web/dist/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# Go
+*.exe
+*.test
+bin/
+
+# Rust
+**/target/
+**/*.rs.bk
+
+# Docker volumes
+postgres_data/
+
+# IDE
+.vscode/
+.idea/
+
+# Claude Code local session state
+.claude/
+
+# Logs
+*.log
+
+# Stray Windows redirect artifact
+/nul
