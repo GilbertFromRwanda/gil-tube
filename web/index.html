@@ -177,44 +177,37 @@
       }
       .segments {
         margin-top: 0.9rem;
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
       }
       .segments-label {
         font-size: 0.72rem;
         text-transform: uppercase;
         letter-spacing: 0.05em;
         color: var(--muted);
-        margin-bottom: 2px;
+        margin-bottom: 6px;
       }
-      .segment-row {
+      /* One compact row holding every active connection's bar side by side,
+         IDM-style, instead of a stacked list of full-width rows. */
+      .segments-line {
         display: flex;
-        align-items: center;
-        gap: 8px;
-        font-size: 0.75rem;
-        color: var(--muted);
+        gap: 3px;
+        align-items: flex-end;
+        height: 30px;
       }
-      .segment-label {
-        width: 64px;
-        flex-shrink: 0;
-      }
-      .segment-track {
+      .segment-bar {
         flex: 1;
-        height: 6px;
-        border-radius: 999px;
-        background: var(--panel-alt);
-        overflow: hidden;
-      }
-      .segment-fill {
+        min-width: 4px;
         height: 100%;
-        background: var(--primary);
-        transition: width 0.3s ease;
+        background: var(--panel-alt);
+        border-radius: 3px;
+        overflow: hidden;
+        display: flex;
+        align-items: flex-end;
       }
-      .segment-bytes {
-        width: 70px;
-        text-align: right;
-        flex-shrink: 0;
+      .segment-bar-fill {
+        width: 100%;
+        height: 0%;
+        background: linear-gradient(180deg, var(--primary-strong), var(--primary));
+        transition: height 0.3s ease;
       }
       .result-row {
         margin-top: 1rem;
@@ -476,12 +469,13 @@
         if (status === 'MUXING') statusPill.classList.add('muxing');
       }
 
-      // Renders one row per active connection. Each segment's percentage is
-      // approximate: workers dynamically pull small byte-range granules off
-      // a shared queue rather than owning a fixed range, so there's no exact
-      // per-connection target — an equal (bytes_total / connection count)
-      // share is used as the denominator just to give each bar a sense of
-      // scale relative to the others.
+      // Renders every active connection as a single vertical bar in one
+      // compact row (IDM-style), rather than a stacked list of full-width
+      // rows. Each bar's fill percentage is approximate: workers dynamically
+      // pull small byte-range granules off a shared queue rather than owning
+      // a fixed range, so there's no exact per-connection target — an equal
+      // (bytes_total / connection count) share is used as the denominator
+      // just to give each bar a sense of scale relative to the others.
       function renderSegments(progress) {
         const segments = progress.segments || [];
         if (segments.length < 2) {
@@ -492,17 +486,13 @@
 
         const total = progress.bytes_total;
         const fairShare = total ? total / segments.length : null;
-        segmentsList.innerHTML = segments
-          .map((bytes, index) => {
+        const bars = segments
+          .map((bytes) => {
             const percent = fairShare ? Math.min(100, (bytes / fairShare) * 100) : 0;
-            return `
-              <div class="segment-row">
-                <span class="segment-label">Conn ${index + 1}</span>
-                <div class="segment-track"><div class="segment-fill" style="width:${percent.toFixed(0)}%"></div></div>
-                <span class="segment-bytes">${formatBytes(bytes)}</span>
-              </div>`;
+            return `<div class="segment-bar" title="${formatBytes(bytes)}"><div class="segment-bar-fill" style="height:${percent.toFixed(0)}%"></div></div>`;
           })
           .join('');
+        segmentsList.innerHTML = `<div class="segments-line">${bars}</div>`;
         segmentsContainer.classList.remove('hidden');
       }
 

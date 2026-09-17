@@ -151,7 +151,7 @@ async fn run_server() {
     let max_bytes: u64 = env_or("MAX_DOWNLOAD_BYTES", &default_max_bytes().to_string())
         .parse()
         .unwrap_or_else(|_| default_max_bytes());
-    let max_chunks: usize = env_or("MAX_CHUNKS_PER_DOWNLOAD", "4").parse().unwrap_or(4);
+    let max_chunks: usize = env_or("MAX_CHUNKS_PER_DOWNLOAD", "8").parse().unwrap_or(8);
     let bind_addr = env_or("BIND_ADDR", "0.0.0.0:8000");
 
     if let Err(err) = std::fs::create_dir_all(&output_dir) {
@@ -187,7 +187,7 @@ async fn run_healthcheck() {
 
 async fn run_cli(url_arg: String, output_arg: String) {
     let output_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let max_chunks: usize = env_or("MAX_CHUNKS_PER_DOWNLOAD", "4").parse().unwrap_or(4);
+    let max_chunks: usize = env_or("MAX_CHUNKS_PER_DOWNLOAD", "8").parse().unwrap_or(8);
     let state = Arc::new(AppState::new(output_dir, 1, default_max_bytes(), max_chunks));
 
     let url = match ssrf::validate_url(&url_arg) {

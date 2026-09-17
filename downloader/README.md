@@ -6,7 +6,7 @@ a maximum file size, and rejects path traversal in output filenames.
 
 When the source server supports HTTP range requests and the file is large
 enough to benefit, it downloads with `MAX_CHUNKS_PER_DOWNLOAD` persistent
-worker connections pulling small (2 MiB) byte-range granules off a shared
+worker connections pulling small (1 MiB) byte-range granules off a shared
 queue, each writing directly to its offset in a pre-allocated file — IDM's
 "dynamic file segmentation" idea: faster connections drain more granules
 than slower ones, rather than every connection getting a fixed equal share
@@ -49,4 +49,4 @@ cargo run -- --url https://example.com/file.bin --output ./target/demo.bin
 | `DOWNLOAD_OUTPUT_DIR` | `/data/downloads` | Where completed files and the file-serving endpoint look |
 | `MAX_GLOBAL_CONCURRENCY` | `8` | Max downloads running at once |
 | `MAX_DOWNLOAD_BYTES` | 5 GiB | Hard cap per file |
-| `MAX_CHUNKS_PER_DOWNLOAD` | `4` | Parallel range requests per stream (`1` disables chunking) |
+| `MAX_CHUNKS_PER_DOWNLOAD` | `8` | Parallel range requests per stream (`1` disables chunking) |
