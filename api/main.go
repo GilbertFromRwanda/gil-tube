@@ -26,6 +26,9 @@ type Job struct {
 	URL       string `json:"url,omitempty"`
 	FormatID  string `json:"format_id,omitempty"`
 	Container string `json:"container,omitempty"`
+	// Duration is the media length in seconds, used by the downloader to
+	// compute a percentage for the ffmpeg mux phase.
+	Duration int `json:"duration,omitempty"`
 	// MediaURL and AudioMediaURL are direct, resolved CDN URLs the downloader
 	// fetches. They are internal implementation details (and may be
 	// short-lived signed URLs), so they are deliberately excluded from the
@@ -157,8 +160,21 @@ func selectFormatPair(formats []FormatEntry, requested string) (video FormatEntr
 	return chosen, audioFormat, nil
 }
 
+// NewJobParams groups the fields needed to create a job. It's a struct
+// rather than positional parameters because the field count has grown
+// (format pairing, media duration for mux progress) and keeps growing.
+type NewJobParams struct {
+	URL           string
+	Title         string
+	MediaURL      string
+	AudioMediaURL string
+	FormatID      string
+	Container     string
+	Duration      int
+}
+
 type JobStore interface {
-	Create(url, title, mediaURL, audioMediaURL, formatID, container string) (*Job, error)
+	Create(params NewJobParams) (*Job, error)
 	Get(id string) (*Job, bool, error)
 	Cancel(id string) (*Job, bool, error)
 }
@@ -172,16 +188,17 @@ func newInMemoryJobStore() *InMemoryJobStore {
 	return &InMemoryJobStore{jobs: make(map[string]*Job)}
 }
 
-func (s *InMemoryJobStore) Create(url, title, mediaURL, audioMediaURL, formatID, container string) (*Job, error) {
+func (s *InMemoryJobStore) Create(params NewJobParams) (*Job, error) {
 	job := &Job{
 		ID:            makeJobID(),
 		Status:        "READY",
-		Title:         title,
-		URL:           url,
-		MediaURL:      mediaURL,
-		AudioMediaURL: audioMediaURL,
-		FormatID:      formatID,
-		Container:     container,
+		Title:         params.Title,
+		URL:           params.URL,
+		MediaURL:      params.MediaURL,
+		AudioMediaURL: params.AudioMediaURL,
+		FormatID:      params.FormatID,
+		Container:     params.Container,
+		Duration:      params.Duration,
 		CreatedAt:     time.Now().UTC(),
 		UpdatedAt:     time.Now().UTC(),
 	}
@@ -241,6 +258,7 @@ func newPostgresJobStore(connString string) (*PostgresJobStore, error) {
 			audio_media_url TEXT,
 			format_id TEXT,
 			container TEXT,
+			duration_seconds INTEGER,
 			error_code TEXT,
 			error_message TEXT,
 			created_at TIMESTAMPTZ NOT NULL,
@@ -258,6 +276,7 @@ func newPostgresJobStore(connString string) (*PostgresJobStore, error) {
 		`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS audio_media_url TEXT`,
 		`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS format_id TEXT`,
 		`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS container TEXT`,
+		`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS duration_seconds INTEGER`,
 		`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS error_code TEXT`,
 		`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS error_message TEXT`,
 	} {
@@ -270,23 +289,24 @@ func newPostgresJobStore(connString string) (*PostgresJobStore, error) {
 	return &PostgresJobStore{db: db}, nil
 }
 
-func (s *PostgresJobStore) Create(url, title, mediaURL, audioMediaURL, formatID, container string) (*Job, error) {
+func (s *PostgresJobStore) Create(params NewJobParams) (*Job, error) {
 	job := &Job{
 		ID:            makeJobID(),
 		Status:        "READY",
-		Title:         title,
-		URL:           url,
-		MediaURL:      mediaURL,
-		AudioMediaURL: audioMediaURL,
-		FormatID:      formatID,
-		Container:     container,
+		Title:         params.Title,
+		URL:           params.URL,
+		MediaURL:      params.MediaURL,
+		AudioMediaURL: params.AudioMediaURL,
+		FormatID:      params.FormatID,
+		Container:     params.Container,
+		Duration:      params.Duration,
 		CreatedAt:     time.Now().UTC(),
 		UpdatedAt:     time.Now().UTC(),
 	}
 	_, err := s.db.Exec(
-		`INSERT INTO jobs (id, status, title, url, media_url, audio_media_url, format_id, container, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-		job.ID, job.Status, job.Title, job.URL, job.MediaURL, job.AudioMediaURL, job.FormatID, job.Container, job.CreatedAt, job.UpdatedAt,
+		`INSERT INTO jobs (id, status, title, url, media_url, audio_media_url, format_id, container, duration_seconds, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		job.ID, job.Status, job.Title, job.URL, job.MediaURL, job.AudioMediaURL, job.FormatID, job.Container, job.Duration, job.CreatedAt, job.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -296,12 +316,13 @@ func (s *PostgresJobStore) Create(url, title, mediaURL, audioMediaURL, formatID,
 
 func (s *PostgresJobStore) Get(id string) (*Job, bool, error) {
 	row := s.db.QueryRow(
-		`SELECT id, status, title, url, media_url, audio_media_url, format_id, container, error_code, error_message, created_at, updated_at
+		`SELECT id, status, title, url, media_url, audio_media_url, format_id, container, duration_seconds, error_code, error_message, created_at, updated_at
 		 FROM jobs WHERE id = $1`, id,
 	)
 	job := &Job{}
 	var mediaURL, audioMediaURL, formatID, container, errorCode, errorMessage sql.NullString
-	if err := row.Scan(&job.ID, &job.Status, &job.Title, &job.URL, &mediaURL, &audioMediaURL, &formatID, &container, &errorCode, &errorMessage, &job.CreatedAt, &job.UpdatedAt); err != nil {
+	var duration sql.NullInt64
+	if err := row.Scan(&job.ID, &job.Status, &job.Title, &job.URL, &mediaURL, &audioMediaURL, &formatID, &container, &duration, &errorCode, &errorMessage, &job.CreatedAt, &job.UpdatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, false, nil
 		}
@@ -311,6 +332,7 @@ func (s *PostgresJobStore) Get(id string) (*Job, bool, error) {
 	job.AudioMediaURL = audioMediaURL.String
 	job.FormatID = formatID.String
 	job.Container = container.String
+	job.Duration = int(duration.Int64)
 	job.ErrorCode = errorCode.String
 	job.ErrorMessage = errorMessage.String
 	return job, true, nil
@@ -358,26 +380,28 @@ func newNatsEventPublisher(url string) EventPublisher {
 // jobReadyPayload carries only what the download worker needs, independent
 // of the public Job JSON shape (which intentionally omits MediaURL).
 type jobReadyPayload struct {
-	JobID     string `json:"job_id"`
-	Title     string `json:"title,omitempty"`
-	URL       string `json:"url,omitempty"`
-	MediaURL  string `json:"media_url"`
-	AudioURL  string `json:"audio_url,omitempty"`
-	FormatID  string `json:"format_id,omitempty"`
-	Container string `json:"container,omitempty"`
+	JobID           string `json:"job_id"`
+	Title           string `json:"title,omitempty"`
+	URL             string `json:"url,omitempty"`
+	MediaURL        string `json:"media_url"`
+	AudioURL        string `json:"audio_url,omitempty"`
+	FormatID        string `json:"format_id,omitempty"`
+	Container       string `json:"container,omitempty"`
+	DurationSeconds int    `json:"duration_seconds,omitempty"`
 }
 
 func (p *NatsEventPublisher) PublishJobReady(job *Job) error {
 	payload, err := json.Marshal(map[string]any{
 		"event": "jobs.ready",
 		"job": jobReadyPayload{
-			JobID:     job.ID,
-			Title:     job.Title,
-			URL:       job.URL,
-			MediaURL:  job.MediaURL,
-			AudioURL:  job.AudioMediaURL,
-			FormatID:  job.FormatID,
-			Container: job.Container,
+			JobID:           job.ID,
+			Title:           job.Title,
+			URL:             job.URL,
+			MediaURL:        job.MediaURL,
+			AudioURL:        job.AudioMediaURL,
+			FormatID:        job.FormatID,
+			Container:       job.Container,
+			DurationSeconds: job.Duration,
 		},
 	})
 	if err != nil {
@@ -591,7 +615,15 @@ func setupRouterWithDeps(extractorBaseURL, downloaderBaseURL string, httpClient 
 			return
 		}
 
-		job, err := jobs.Create(payload.URL, extractResp.Title, video.URL, audio.URL, video.ID, video.Container)
+		job, err := jobs.Create(NewJobParams{
+			URL:           payload.URL,
+			Title:         extractResp.Title,
+			MediaURL:      video.URL,
+			AudioMediaURL: audio.URL,
+			FormatID:      video.ID,
+			Container:     video.Container,
+			Duration:      extractResp.Duration,
+		})
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, apiError("EXTRACTION_FAILED", "failed to create job"))
 			return
