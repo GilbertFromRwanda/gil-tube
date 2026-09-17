@@ -4,50 +4,73 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Gil Tube</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
     <style>
       :root {
-        --bg: #0f172a;
-        --panel: #111827;
+        --bg: #0b1120;
+        --bg-glow: radial-gradient(60rem 30rem at 50% -10%, rgba(56, 189, 248, 0.12), transparent 60%);
+        --panel: #121a2e;
         --panel-alt: #0b1220;
-        --text: #e5e7eb;
-        --muted: #94a3b8;
+        --text: #e9edf5;
+        --muted: #8b96ab;
         --primary: #38bdf8;
         --primary-strong: #0ea5e9;
         --success: #22c55e;
         --danger: #f87171;
-        --border: #1f2937;
+        --warning: #facc15;
+        --border: #223049;
+        --shadow: 0 12px 32px rgba(2, 6, 23, 0.45);
       }
       * { box-sizing: border-box; }
       body {
         margin: 0;
-        font-family: -apple-system, Segoe UI, Arial, sans-serif;
-        background: var(--bg);
+        font-family: "Inter", -apple-system, "Segoe UI", Arial, sans-serif;
+        background: var(--bg) var(--bg-glow) no-repeat;
         color: var(--text);
         min-height: 100vh;
         display: flex;
         justify-content: center;
-        padding: 2.5rem 1rem;
+        padding: 3rem 1rem;
       }
       .app {
-        width: min(720px, 100%);
+        width: min(760px, 100%);
         display: flex;
         flex-direction: column;
-        gap: 1.25rem;
+        gap: 1.4rem;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        margin-bottom: 0.1rem;
+      }
+      .brand-mark {
+        font-size: 1.6rem;
+        line-height: 1;
       }
       h1 {
-        margin: 0 0 0.25rem;
-        font-size: 1.6rem;
+        margin: 0;
+        font-size: 1.65rem;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+        background: linear-gradient(90deg, var(--text), var(--primary));
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
       }
       .subtitle {
-        margin: 0;
+        margin: 0.15rem 0 0;
         color: var(--muted);
-        font-size: 0.9rem;
+        font-size: 0.92rem;
       }
       .card {
-        background: var(--panel);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent), var(--panel);
         border: 1px solid var(--border);
-        border-radius: 16px;
+        border-radius: 18px;
         padding: 1.5rem;
+        box-shadow: var(--shadow);
       }
       form.url-form {
         display: flex;
@@ -55,43 +78,68 @@
         flex-wrap: wrap;
       }
       input, select, button {
-        border-radius: 10px;
+        border-radius: 12px;
         border: 1px solid var(--border);
         font-size: 0.95rem;
         font-family: inherit;
       }
       input[type="url"], input[type="text"] {
         flex: 1 1 380px;
-        padding: 0.85rem 1rem;
+        padding: 0.85rem 1.1rem;
         background: var(--panel-alt);
         color: var(--text);
+        transition: border-color 0.15s ease, box-shadow 0.15s ease;
+      }
+      input[type="url"]:focus, input[type="text"]:focus {
+        outline: none;
+        border-color: var(--primary);
+        box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.15);
       }
       .search-results {
-        margin-top: 1rem;
+        margin-top: 1.1rem;
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-        gap: 12px;
+        gap: 14px;
       }
       .result-card {
         cursor: pointer;
-        border-radius: 10px;
+        border-radius: 12px;
         overflow: hidden;
         background: var(--panel-alt);
         border: 1px solid var(--border);
-        transition: border-color 0.15s ease;
+        transition: border-color 0.15s ease, transform 0.15s ease;
       }
-      .result-card:hover { border-color: var(--primary); }
+      .result-card:hover {
+        border-color: var(--primary);
+        transform: translateY(-2px);
+      }
+      .result-thumb-wrap {
+        position: relative;
+        background: #000;
+      }
       .result-thumb {
         width: 100%;
         aspect-ratio: 16 / 9;
         object-fit: cover;
         display: block;
-        background: #000;
       }
-      .result-info { padding: 0.5rem 0.6rem; }
+      .result-duration {
+        position: absolute;
+        right: 6px;
+        bottom: 6px;
+        background: rgba(0, 0, 0, 0.8);
+        color: #fff;
+        font-size: 0.68rem;
+        font-weight: 600;
+        padding: 1px 5px;
+        border-radius: 4px;
+        line-height: 1.4;
+      }
+      .result-info { padding: 0.55rem 0.65rem; }
       .result-title {
         font-size: 0.8rem;
-        line-height: 1.25;
+        font-weight: 600;
+        line-height: 1.3;
         display: -webkit-box;
         -webkit-line-clamp: 2;
         -webkit-box-orient: vertical;
@@ -109,36 +157,49 @@
         background: var(--panel-alt);
         color: var(--text);
       }
+      select:disabled { color: var(--muted); }
       button {
-        padding: 0.85rem 1.25rem;
-        background: var(--primary);
-        color: #082f49;
-        font-weight: 600;
+        padding: 0.85rem 1.3rem;
+        background: linear-gradient(180deg, var(--primary), var(--primary-strong));
+        color: #062033;
+        font-weight: 700;
         cursor: pointer;
         border: none;
+        transition: filter 0.15s ease, transform 0.1s ease;
       }
-      button:hover:not(:disabled) { background: var(--primary-strong); }
-      button:disabled { opacity: 0.5; cursor: not-allowed; }
+      button:hover:not(:disabled) { filter: brightness(1.08); }
+      button:active:not(:disabled) { transform: translateY(1px); }
+      button:disabled { opacity: 0.5; cursor: not-allowed; filter: none; }
       button.secondary {
         background: transparent;
         border: 1px solid var(--border);
         color: var(--text);
       }
-      button.secondary:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
+      button.secondary:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); filter: none; }
       .hidden { display: none !important; }
       .error-banner {
         background: rgba(248, 113, 113, 0.12);
         border: 1px solid var(--danger);
         color: var(--danger);
-        border-radius: 10px;
+        border-radius: 12px;
         padding: 0.75rem 1rem;
         font-size: 0.9rem;
+      }
+      .preview-layout {
+        display: flex;
+        flex-direction: column;
+        gap: 1.1rem;
+      }
+      @media (min-width: 640px) {
+        .preview-layout { flex-direction: row; align-items: flex-start; }
+        .preview-embed { flex: 1 1 55%; margin-bottom: 0; }
+        .preview-body { flex: 1 1 45%; display: flex; flex-direction: column; }
       }
       .preview-embed {
         position: relative;
         width: 100%;
         padding-top: 56.25%;
-        border-radius: 12px;
+        border-radius: 14px;
         overflow: hidden;
         background: #000;
         margin-bottom: 1rem;
@@ -152,7 +213,8 @@
       }
       .preview-meta h2 {
         margin: 0 0 0.35rem;
-        font-size: 1.15rem;
+        font-size: 1.1rem;
+        line-height: 1.35;
       }
       .preview-meta p {
         margin: 0;
@@ -164,6 +226,9 @@
         gap: 10px;
         margin-top: 1.1rem;
         flex-wrap: wrap;
+      }
+      @media (min-width: 640px) {
+        .format-row { margin-top: auto; padding-top: 1.1rem; }
       }
       .status-row {
         display: flex;
@@ -183,7 +248,7 @@
       }
       .status-pill.completed { background: rgba(34, 197, 94, 0.15); color: var(--success); }
       .status-pill.failed, .status-pill.cancelled { background: rgba(248, 113, 113, 0.15); color: var(--danger); }
-      .status-pill.muxing { background: rgba(250, 204, 21, 0.15); color: #facc15; }
+      .status-pill.muxing { background: rgba(250, 204, 21, 0.15); color: var(--warning); }
       .progress-track {
         width: 100%;
         height: 10px;
@@ -254,10 +319,10 @@
       }
       a.download-link {
         display: inline-block;
-        padding: 0.85rem 1.25rem;
-        border-radius: 10px;
-        background: var(--success);
-        color: #05230f;
+        padding: 0.85rem 1.3rem;
+        border-radius: 12px;
+        background: linear-gradient(180deg, var(--success), #16a34a);
+        color: #052e13;
         font-weight: 700;
         text-decoration: none;
       }
@@ -266,7 +331,10 @@
   <body>
     <div class="app">
       <div>
-        <h1>Gil Tube</h1>
+        <div class="brand">
+          <span class="brand-mark">📼</span>
+          <h1>Gil Tube</h1>
+        </div>
         <p class="subtitle">Search or paste a link you're authorized to download, preview it, then download.</p>
       </div>
 
@@ -288,16 +356,20 @@
       </div>
 
       <div id="previewCard" class="card hidden">
-        <div id="previewEmbed" class="preview-embed hidden">
-          <iframe id="previewIframe" src="" allowfullscreen></iframe>
-        </div>
-        <div class="preview-meta">
-          <h2 id="previewTitle"></h2>
-          <p id="previewSub"></p>
-        </div>
-        <div class="format-row">
-          <select id="formatSelect"></select>
-          <button id="downloadButton" type="button">Download</button>
+        <div class="preview-layout">
+          <div id="previewEmbed" class="preview-embed hidden">
+            <iframe id="previewIframe" src="" allowfullscreen></iframe>
+          </div>
+          <div class="preview-body">
+            <div class="preview-meta">
+              <h2 id="previewTitle"></h2>
+              <p id="previewSub"></p>
+            </div>
+            <div class="format-row">
+              <select id="formatSelect"></select>
+              <button id="downloadButton" type="button">Download</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -451,10 +523,14 @@
 
         searchResults.innerHTML = results
           .map((result, index) => {
-            const meta = [formatDuration(result.duration), result.uploader].filter(Boolean).join(' · ');
+            const durationLabel = formatDuration(result.duration);
+            const meta = result.uploader || '';
             return `
               <div class="result-card" data-index="${index}">
-                <img class="result-thumb" src="${escapeHtml(result.thumbnail || '')}" alt="" loading="lazy" />
+                <div class="result-thumb-wrap">
+                  <img class="result-thumb" src="${escapeHtml(result.thumbnail || '')}" alt="" loading="lazy" />
+                  ${durationLabel ? `<span class="result-duration">${escapeHtml(durationLabel)}</span>` : ''}
+                </div>
                 <div class="result-info">
                   <p class="result-title">${escapeHtml(result.title || 'Untitled')}</p>
                   <p class="result-meta">${escapeHtml(meta)}</p>
@@ -468,10 +544,51 @@
           card.addEventListener('click', () => {
             const result = results[Number(card.dataset.index)];
             if (!result || !result.url) return;
-            urlInput.value = result.url;
-            loadForm.requestSubmit();
+            selectSearchResult(result);
           });
         });
+      }
+
+      // Search results already carry title/thumbnail/uploader/duration, so
+      // clicking one shows the preview instantly instead of re-fetching and
+      // re-showing a blank "Loading…" state. Only the format list still
+      // needs a fresh call, since a flat search entry has no per-format CDN
+      // URLs (only full extraction resolves those) - so that part loads in
+      // the background while the rest of the preview is already visible.
+      async function selectSearchResult(result) {
+        clearError();
+        currentURL = result.url;
+        urlInput.value = result.url;
+        jobCard.classList.add('hidden');
+
+        renderPreviewShell(result);
+        formatSelect.innerHTML = '<option>Loading formats…</option>';
+        formatSelect.disabled = true;
+        downloadButton.disabled = true;
+
+        try {
+          const response = await fetch(`${API_BASE}/api/v1/preview`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: result.url }),
+          });
+          const data = await response.json();
+
+          if (!response.ok) {
+            const message = data && data.error ? data.error.message : 'Could not load formats for this video.';
+            showError(message);
+            formatSelect.innerHTML = '<option value="">Formats unavailable</option>';
+            return;
+          }
+
+          populateFormatOptions(data.formats);
+        } catch (err) {
+          showError(`Connection error: ${err.message}`);
+          formatSelect.innerHTML = '<option value="">Formats unavailable</option>';
+        } finally {
+          formatSelect.disabled = false;
+          downloadButton.disabled = false;
+        }
       }
 
       loadForm.addEventListener('submit', async (event) => {
@@ -510,7 +627,11 @@
         }
       });
 
-      function renderPreview(info) {
+      // Renders the parts of the preview we may already know without a
+      // network call: title, embed, duration, uploader. Shared by the
+      // paste-a-URL flow (after /api/v1/preview) and the search-click flow
+      // (from the search result itself, before formats have even loaded).
+      function renderPreviewShell(info) {
         previewTitle.textContent = info.title || 'Untitled';
         const metaParts = [];
         if (info.duration) metaParts.push(formatDuration(info.duration));
@@ -524,22 +645,29 @@
           previewEmbed.classList.add('hidden');
         }
 
-        const formats = (info.formats || []).filter((f) => f.id && (f.height || f.container));
-        formats.sort((a, b) => (b.height || 0) - (a.height || 0));
+        previewCard.classList.remove('hidden');
+      }
+
+      function populateFormatOptions(formats) {
+        const filtered = (formats || []).filter((f) => f.id && (f.height || f.container));
+        filtered.sort((a, b) => (b.height || 0) - (a.height || 0));
 
         formatSelect.innerHTML = '';
         const bestOption = document.createElement('option');
         bestOption.value = '';
         bestOption.textContent = 'Best available';
         formatSelect.appendChild(bestOption);
-        for (const format of formats) {
+        for (const format of filtered) {
           const option = document.createElement('option');
           option.value = format.id;
           option.textContent = formatLabel(format);
           formatSelect.appendChild(option);
         }
+      }
 
-        previewCard.classList.remove('hidden');
+      function renderPreview(info) {
+        renderPreviewShell(info);
+        populateFormatOptions(info.formats);
       }
 
       downloadButton.addEventListener('click', async () => {
