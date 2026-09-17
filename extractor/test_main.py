@@ -50,6 +50,8 @@ FAKE_INFO = {
             "resolution": "1920x1080",
             "tbr": 4500.0,
             "filesize": 104857600,
+            "protocol": "https",
+            "url": "https://cdn.example.com/video-1080p.mp4",
         }
     ],
 }
@@ -103,3 +105,63 @@ def test_extract_returns_unsupported_source_for_live_content():
         response = client.post('/api/v1/extract', json={'url': 'https://www.youtube.com/watch?v=live'})
         assert response.status_code == 422
         assert response.get_json()['error']['code'] == 'UNSUPPORTED_SOURCE'
+
+
+FAKE_SEARCH_INFO = {
+    "entries": [
+        {
+            "id": "vid1",
+            "title": "First result",
+            "duration": 120,
+            "thumbnails": [{"url": "https://i.ytimg.com/vi/vid1/default.jpg"}],
+            "channel": "Channel One",
+        },
+        {
+            "id": "vid2",
+            "title": "Second result",
+            "duration": 245,
+            "thumbnails": [{"url": "https://i.ytimg.com/vi/vid2/default.jpg"}],
+            "uploader": "Channel Two",
+        },
+    ]
+}
+
+
+def test_search_requires_query():
+    client = main.app.test_client()
+    response = client.post('/api/v1/search', json={})
+    assert response.status_code == 400
+    assert response.get_json()['error']['code'] == 'INVALID_QUERY'
+
+
+def test_search_returns_result_list():
+    main.cache = main.build_cache_from_env()
+    with patch.object(main, 'run_search', return_value=FAKE_SEARCH_INFO) as mocked:
+        client = main.app.test_client()
+        response = client.post('/api/v1/search', json={'query': 'lofi beats', 'limit': 5})
+        assert response.status_code == 200
+        payload = response.get_json()
+        assert payload['query'] == 'lofi beats'
+        assert len(payload['results']) == 2
+        assert payload['results'][0]['url'] == 'https://www.youtube.com/watch?v=vid1'
+        assert payload['results'][1]['uploader'] == 'Channel Two'
+        mocked.assert_called_once_with('lofi beats', 5)
+
+
+def test_search_uses_cache_on_second_call():
+    main.cache = main.build_cache_from_env()
+    with patch.object(main, 'run_search', return_value=FAKE_SEARCH_INFO) as mocked:
+        client = main.app.test_client()
+        client.post('/api/v1/search', json={'query': 'cache me'})
+        client.post('/api/v1/search', json={'query': 'cache me'})
+        assert mocked.call_count == 1
+
+
+def test_search_maps_timeout_to_search_timeout_code():
+    import concurrent.futures
+
+    with patch.object(main, 'search_with_timeout', side_effect=concurrent.futures.TimeoutError()):
+        client = main.app.test_client()
+        response = client.post('/api/v1/search', json={'query': 'slow query'})
+        assert response.status_code == 504
+        assert response.get_json()['error']['code'] == 'SEARCH_TIMEOUT'
