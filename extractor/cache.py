@@ -52,9 +52,9 @@ class RedisCache(ExtractionCache):
         self._redis.setex(key, ttl_seconds, json.dumps(value))
 
 
-def cache_key(url: str) -> str:
-    normalized = url.strip().lower()
-    return "extract:" + hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+def cache_key(value: str, prefix: str = "extract") -> str:
+    normalized = value.strip().lower()
+    return f"{prefix}:" + hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 def build_cache_from_env() -> ExtractionCache:
