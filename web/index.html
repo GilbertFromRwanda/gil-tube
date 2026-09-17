@@ -30,12 +30,74 @@
         background: var(--bg) var(--bg-glow) no-repeat;
         color: var(--text);
         min-height: 100vh;
+      }
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        background: rgba(11, 17, 32, 0.85);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        border-bottom: 1px solid var(--border);
+      }
+      .topbar-inner {
+        width: min(1100px, 100%);
+        margin: 0 auto;
+        padding: 0.85rem 1rem;
+        display: flex;
+        align-items: center;
+        gap: 1.5rem;
+        flex-wrap: wrap;
+      }
+      .topbar-search {
+        display: flex;
+        gap: 8px;
+        flex: 1 1 260px;
+        min-width: 0;
+      }
+      .topbar-search input[type="text"] {
+        flex: 1 1 auto;
+        min-width: 0;
+        padding: 0.6rem 1.1rem;
+        border-radius: 999px;
+      }
+      .topbar-search button {
+        padding: 0.6rem 1.15rem;
+        border-radius: 999px;
+        flex-shrink: 0;
+      }
+      .page {
         display: flex;
         justify-content: center;
-        padding: 3rem 1rem;
+        padding: 1.75rem 1rem 3rem;
+      }
+      @media (max-width: 560px) {
+        .topbar-search { flex-basis: 100%; }
       }
       .app {
-        width: min(760px, 100%);
+        width: min(1100px, 100%);
+        display: flex;
+        flex-direction: column;
+        gap: 1.4rem;
+      }
+      .layout {
+        display: flex;
+        flex-direction: column;
+        gap: 1.4rem;
+      }
+      @media (min-width: 880px) {
+        .layout {
+          flex-direction: row;
+          align-items: flex-start;
+        }
+        .layout-main { flex: 1 1 auto; min-width: 0; }
+        .layout-side {
+          flex: 0 0 360px;
+          position: sticky;
+          top: 1.5rem;
+        }
+      }
+      .layout-main, .layout-side {
         display: flex;
         flex-direction: column;
         gap: 1.4rem;
@@ -43,18 +105,19 @@
       .brand {
         display: flex;
         align-items: center;
-        gap: 0.6rem;
-        margin-bottom: 0.1rem;
+        gap: 0.5rem;
+        flex-shrink: 0;
       }
       .brand-mark {
-        font-size: 1.6rem;
+        font-size: 1.4rem;
         line-height: 1;
       }
       h1 {
         margin: 0;
-        font-size: 1.65rem;
+        font-size: 1.2rem;
         font-weight: 800;
         letter-spacing: -0.02em;
+        white-space: nowrap;
         background: linear-gradient(90deg, var(--text), var(--primary));
         -webkit-background-clip: text;
         background-clip: text;
@@ -190,11 +253,6 @@
         flex-direction: column;
         gap: 1.1rem;
       }
-      @media (min-width: 640px) {
-        .preview-layout { flex-direction: row; align-items: flex-start; }
-        .preview-embed { flex: 1 1 55%; margin-bottom: 0; }
-        .preview-body { flex: 1 1 45%; display: flex; flex-direction: column; }
-      }
       .preview-embed {
         position: relative;
         width: 100%;
@@ -226,9 +284,6 @@
         gap: 10px;
         margin-top: 1.1rem;
         flex-wrap: wrap;
-      }
-      @media (min-width: 640px) {
-        .format-row { margin-top: auto; padding-top: 1.1rem; }
       }
       .status-row {
         display: flex;
@@ -329,68 +384,77 @@
     </style>
   </head>
   <body>
-    <div class="app">
-      <div>
+    <header class="topbar">
+      <div class="topbar-inner">
         <div class="brand">
           <span class="brand-mark">📼</span>
           <h1>Gil Tube</h1>
         </div>
-        <p class="subtitle">Search or paste a link you're authorized to download, preview it, then download.</p>
-      </div>
-
-      <div class="card">
-        <form id="searchForm" class="url-form">
+        <form id="searchForm" class="topbar-search">
           <input id="searchInput" type="text" placeholder="Search YouTube…" />
           <button id="searchButton" type="submit">Search</button>
         </form>
-        <div id="searchError" class="error-banner hidden" style="margin-top: 0.9rem;"></div>
-        <div id="searchResults" class="search-results hidden"></div>
       </div>
+    </header>
 
-      <div class="card">
-        <form id="loadForm" class="url-form">
-          <input id="urlInput" type="url" placeholder="https://www.youtube.com/watch?v=..." required />
-          <button id="loadButton" type="submit">Load</button>
-        </form>
-        <div id="loadError" class="error-banner hidden" style="margin-top: 0.9rem;"></div>
-      </div>
+    <div class="page">
+    <div class="app">
+      <div id="searchError" class="error-banner hidden"></div>
 
-      <div id="previewCard" class="card hidden">
-        <div class="preview-layout">
-          <div id="previewEmbed" class="preview-embed hidden">
-            <iframe id="previewIframe" src="" allowfullscreen></iframe>
-          </div>
-          <div class="preview-body">
-            <div class="preview-meta">
-              <h2 id="previewTitle"></h2>
-              <p id="previewSub"></p>
-            </div>
-            <div class="format-row">
-              <select id="formatSelect"></select>
-              <button id="downloadButton" type="button">Download</button>
-            </div>
+      <div class="layout">
+        <div class="layout-main">
+          <div id="searchResults" class="search-results hidden"></div>
+
+          <div class="card">
+            <p class="subtitle" style="margin-bottom: 0.9rem;">Or paste a link directly:</p>
+            <form id="loadForm" class="url-form">
+              <input id="urlInput" type="url" placeholder="https://www.youtube.com/watch?v=..." required />
+              <button id="loadButton" type="submit">Load</button>
+            </form>
+            <div id="loadError" class="error-banner hidden" style="margin-top: 0.9rem;"></div>
           </div>
         </div>
-      </div>
 
-      <div id="jobCard" class="card hidden">
-        <div class="status-row">
-          <span id="statusPill" class="status-pill">QUEUED</span>
-          <button id="cancelButton" class="secondary" type="button">Cancel</button>
+        <div class="layout-side">
+          <div id="previewCard" class="card hidden">
+            <div class="preview-layout">
+              <div id="previewEmbed" class="preview-embed hidden">
+                <div id="previewIframe"></div>
+              </div>
+              <div class="preview-body">
+                <div class="preview-meta">
+                  <h2 id="previewTitle"></h2>
+                  <p id="previewSub"></p>
+                </div>
+                <div class="format-row">
+                  <select id="formatSelect"></select>
+                  <button id="downloadButton" type="button">Download</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div id="jobCard" class="card hidden">
+            <div class="status-row">
+              <span id="statusPill" class="status-pill">QUEUED</span>
+              <button id="cancelButton" class="secondary" type="button">Cancel</button>
+            </div>
+            <div class="progress-track">
+              <div id="progressFill" class="progress-fill indeterminate"></div>
+            </div>
+            <div class="progress-stats">
+              <span id="progressBytes">0 B</span>
+              <span id="progressSpeed"></span>
+            </div>
+            <div id="segmentsContainer" class="segments hidden">
+              <div class="segments-label">Connections</div>
+              <div id="segmentsList"></div>
+            </div>
+            <div id="resultRow" class="result-row hidden"></div>
+          </div>
         </div>
-        <div class="progress-track">
-          <div id="progressFill" class="progress-fill indeterminate"></div>
-        </div>
-        <div class="progress-stats">
-          <span id="progressBytes">0 B</span>
-          <span id="progressSpeed"></span>
-        </div>
-        <div id="segmentsContainer" class="segments hidden">
-          <div class="segments-label">Connections</div>
-          <div id="segmentsList"></div>
-        </div>
-        <div id="resultRow" class="result-row hidden"></div>
       </div>
+    </div>
     </div>
 
     <script>
@@ -428,6 +492,44 @@
       let currentURL = '';
       let pollTimer = null;
       let currentJobId = null;
+
+      // In-page preview via the official YouTube IFrame Player API. This is
+      // the standard "keyless" embed mechanism (no Data API key needed,
+      // unlike search) - it just needs the API script loaded and a single
+      // persistent YT.Player instance that we re-cue per video rather than
+      // recreating an iframe every time.
+      let ytPlayer = null;
+      let ytApiReady = false;
+      let pendingVideoId = null;
+
+      window.onYouTubeIframeAPIReady = function () {
+        ytApiReady = true;
+        if (pendingVideoId) {
+          showVideoPreview(pendingVideoId);
+          pendingVideoId = null;
+        }
+      };
+
+      function showVideoPreview(videoId) {
+        if (!videoId) {
+          previewEmbed.classList.add('hidden');
+          return;
+        }
+        previewEmbed.classList.remove('hidden');
+
+        if (!ytApiReady) {
+          pendingVideoId = videoId;
+          return;
+        }
+        if (ytPlayer) {
+          ytPlayer.cueVideoById(videoId);
+        } else {
+          ytPlayer = new YT.Player('previewIframe', {
+            videoId,
+            playerVars: { rel: 0, modestbranding: 1 },
+          });
+        }
+      }
 
       function showError(message) {
         loadError.textContent = message;
@@ -477,12 +579,9 @@
         return div.innerHTML;
       }
 
-      searchForm.addEventListener('submit', async (event) => {
-        event.preventDefault();
+      async function runSearch(query) {
         searchError.classList.add('hidden');
         searchError.textContent = '';
-
-        const query = searchInput.value.trim();
         if (!query) return;
 
         searchButton.disabled = true;
@@ -512,7 +611,17 @@
           searchButton.disabled = false;
           searchButton.textContent = 'Search';
         }
+      }
+
+      searchForm.addEventListener('submit', (event) => {
+        event.preventDefault();
+        runSearch(searchInput.value.trim());
       });
+
+      // Seed the page with results instead of a blank state on first load.
+      const DEFAULT_SEARCH_QUERY = 'Rwanda SDA music';
+      searchInput.value = DEFAULT_SEARCH_QUERY;
+      runSearch(DEFAULT_SEARCH_QUERY);
 
       function renderSearchResults(results) {
         if (!results.length) {
@@ -638,12 +747,7 @@
         if (info.uploader) metaParts.push(info.uploader);
         previewSub.textContent = metaParts.join(' · ');
 
-        if (info.id) {
-          previewIframe.src = `https://www.youtube.com/embed/${encodeURIComponent(info.id)}`;
-          previewEmbed.classList.remove('hidden');
-        } else {
-          previewEmbed.classList.add('hidden');
-        }
+        showVideoPreview(info.id);
 
         previewCard.classList.remove('hidden');
       }
@@ -844,5 +948,8 @@
         }
       });
     </script>
+    <!-- Loaded after our script so window.onYouTubeIframeAPIReady is already
+         defined by the time this (async) script finishes fetching. -->
+    <script src="https://www.youtube.com/iframe_api"></script>
   </body>
 </html>
