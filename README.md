@@ -13,25 +13,29 @@ Gil Tube is a monorepo for a self-hosted YouTube media download platform. The re
 
 ## Quick start
 
-1. Start local dependencies:
+```bash
+./start.sh
+```
+
+This builds and starts every backend service with `docker compose`, waits for
+them to become healthy, then serves the web UI at http://localhost:3000 and
+opens it in your browser. Pass `--no-open` to skip the browser launch. Press
+`Ctrl+C` to stop the web server; run `docker compose down` to stop the
+backend too.
+
+### Manual / per-service (for development)
+
+1. Start everything with Docker Compose directly:
    ```bash
-   docker compose up -d
+   docker compose up -d --build
    ```
-2. Start the API:
+2. Or run a single service against your own toolchain instead of its
+   container, e.g.:
    ```bash
-   make api
-   ```
-3. Start the extractor:
-   ```bash
-   make extractor
-   ```
-4. Start the downloader when you need a real file download:
-   ```bash
-   make downloader
-   ```
-5. Serve the UI:
-   ```bash
-   make web
+   make api          # cd api && go run .
+   make extractor    # cd extractor && python main.py
+   make downloader   # cd downloader && cargo run -- --url ... --output ...
+   make web          # cd web && python -m http.server 3000
    ```
 
 ## Default ports
