@@ -172,6 +172,59 @@ func TestPreviewReturnsMetadataWithoutCreatingJob(t *testing.T) {
 	}
 }
 
+func TestSearchRequiresQuery(t *testing.T) {
+	router := setupRouter("http://example.com", http.DefaultClient)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/search", strings.NewReader(`{}`))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+}
+
+func TestSearchProxiesExtractorResults(t *testing.T) {
+	extractor := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/search" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body["query"] != "lofi beats" {
+			t.Fatalf("expected query to be forwarded, got %v", body["query"])
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"query": "lofi beats",
+			"results": []map[string]any{
+				{"id": "vid1", "title": "First result", "url": "https://www.youtube.com/watch?v=vid1"},
+			},
+		})
+	}))
+	defer extractor.Close()
+
+	router := setupRouter(extractor.URL, extractor.Client())
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/search", strings.NewReader(`{"query":"lofi beats"}`))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	results, ok := payload["results"].([]any)
+	if !ok || len(results) != 1 {
+		t.Fatalf("expected one result to be proxied through, got: %s", rec.Body.String())
+	}
+}
+
 func TestSelectFormatPairPicksBestVideoAndPairsAudio(t *testing.T) {
 	formats := []FormatEntry{
 		{ID: "137", Container: "mp4", VideoCodec: "avc1", Height: 1080, URL: "https://cdn.example.com/v1080.mp4"},

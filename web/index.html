@@ -60,11 +60,48 @@
         font-size: 0.95rem;
         font-family: inherit;
       }
-      input[type="url"] {
+      input[type="url"], input[type="text"] {
         flex: 1 1 380px;
         padding: 0.85rem 1rem;
         background: var(--panel-alt);
         color: var(--text);
+      }
+      .search-results {
+        margin-top: 1rem;
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: 12px;
+      }
+      .result-card {
+        cursor: pointer;
+        border-radius: 10px;
+        overflow: hidden;
+        background: var(--panel-alt);
+        border: 1px solid var(--border);
+        transition: border-color 0.15s ease;
+      }
+      .result-card:hover { border-color: var(--primary); }
+      .result-thumb {
+        width: 100%;
+        aspect-ratio: 16 / 9;
+        object-fit: cover;
+        display: block;
+        background: #000;
+      }
+      .result-info { padding: 0.5rem 0.6rem; }
+      .result-title {
+        font-size: 0.8rem;
+        line-height: 1.25;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        margin: 0 0 4px;
+      }
+      .result-meta {
+        font-size: 0.7rem;
+        color: var(--muted);
+        margin: 0;
       }
       select {
         flex: 1 1 220px;
@@ -230,7 +267,16 @@
     <div class="app">
       <div>
         <h1>Gil Tube</h1>
-        <p class="subtitle">Paste a link you're authorized to download, preview it, then download.</p>
+        <p class="subtitle">Search or paste a link you're authorized to download, preview it, then download.</p>
+      </div>
+
+      <div class="card">
+        <form id="searchForm" class="url-form">
+          <input id="searchInput" type="text" placeholder="Search YouTube…" />
+          <button id="searchButton" type="submit">Search</button>
+        </form>
+        <div id="searchError" class="error-banner hidden" style="margin-top: 0.9rem;"></div>
+        <div id="searchResults" class="search-results hidden"></div>
       </div>
 
       <div class="card">
@@ -277,6 +323,12 @@
 
     <script>
       const API_BASE = 'http://localhost:8081';
+
+      const searchForm = document.getElementById('searchForm');
+      const searchInput = document.getElementById('searchInput');
+      const searchButton = document.getElementById('searchButton');
+      const searchError = document.getElementById('searchError');
+      const searchResults = document.getElementById('searchResults');
 
       const loadForm = document.getElementById('loadForm');
       const urlInput = document.getElementById('urlInput');
@@ -343,6 +395,83 @@
         if (format.container) parts.push(format.container);
         if (format.filesize) parts.push(formatBytes(format.filesize));
         return `${parts.join(' · ')} (${format.id})`;
+      }
+
+      // Result titles/channel names come from third-party YouTube content,
+      // so they're untrusted and must be escaped before going into innerHTML.
+      function escapeHtml(str) {
+        const div = document.createElement('div');
+        div.textContent = str == null ? '' : String(str);
+        return div.innerHTML;
+      }
+
+      searchForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        searchError.classList.add('hidden');
+        searchError.textContent = '';
+
+        const query = searchInput.value.trim();
+        if (!query) return;
+
+        searchButton.disabled = true;
+        searchButton.textContent = 'Searching…';
+
+        try {
+          const response = await fetch(`${API_BASE}/api/v1/search`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query, limit: 12 }),
+          });
+          const data = await response.json();
+
+          if (!response.ok) {
+            const message = data && data.error ? data.error.message : 'Search failed.';
+            searchError.textContent = message;
+            searchError.classList.remove('hidden');
+            searchResults.classList.add('hidden');
+            return;
+          }
+
+          renderSearchResults(data.results || []);
+        } catch (err) {
+          searchError.textContent = `Connection error: ${err.message}`;
+          searchError.classList.remove('hidden');
+        } finally {
+          searchButton.disabled = false;
+          searchButton.textContent = 'Search';
+        }
+      });
+
+      function renderSearchResults(results) {
+        if (!results.length) {
+          searchResults.innerHTML = '<p class="subtitle">No results.</p>';
+          searchResults.classList.remove('hidden');
+          return;
+        }
+
+        searchResults.innerHTML = results
+          .map((result, index) => {
+            const meta = [formatDuration(result.duration), result.uploader].filter(Boolean).join(' · ');
+            return `
+              <div class="result-card" data-index="${index}">
+                <img class="result-thumb" src="${escapeHtml(result.thumbnail || '')}" alt="" loading="lazy" />
+                <div class="result-info">
+                  <p class="result-title">${escapeHtml(result.title || 'Untitled')}</p>
+                  <p class="result-meta">${escapeHtml(meta)}</p>
+                </div>
+              </div>`;
+          })
+          .join('');
+        searchResults.classList.remove('hidden');
+
+        searchResults.querySelectorAll('.result-card').forEach((card) => {
+          card.addEventListener('click', () => {
+            const result = results[Number(card.dataset.index)];
+            if (!result || !result.url) return;
+            urlInput.value = result.url;
+            loadForm.requestSubmit();
+          });
+        });
       }
 
       loadForm.addEventListener('submit', async (event) => {

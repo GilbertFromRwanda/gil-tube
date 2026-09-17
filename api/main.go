@@ -491,6 +491,34 @@ func callExtractor(extractorBaseURL string, httpClient *http.Client, url string)
 	return &extractResp, http.StatusOK, body, nil
 }
 
+// callExtractorSearch proxies a search query to the extractor and returns
+// its raw status/body, since the API doesn't need to inspect the result
+// shape itself (it's passed straight through to the browser).
+func callExtractorSearch(extractorBaseURL string, httpClient *http.Client, query string, limit int) (int, []byte, error) {
+	reqBody, err := json.Marshal(map[string]any{"query": query, "limit": limit})
+	if err != nil {
+		return 0, nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, extractorBaseURL+"/api/v1/search", bytes.NewReader(reqBody))
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, nil, err
+	}
+	return resp.StatusCode, body, nil
+}
+
 // sanitizeFilename strips a video title down to characters safe to embed in
 // an HTTP header value. Titles come from untrusted third-party content, so
 // this also blocks header-injection via embedded CR/LF/quote characters.
@@ -578,6 +606,28 @@ func setupRouterWithDeps(extractorBaseURL, downloaderBaseURL string, httpClient 
 			return
 		}
 		c.JSON(http.StatusOK, extractResp)
+	})
+
+	r.POST("/api/v1/search", func(c *gin.Context) {
+		var payload struct {
+			Query string `json:"query"`
+			Limit int    `json:"limit"`
+		}
+
+		if err := c.ShouldBindJSON(&payload); err != nil || strings.TrimSpace(payload.Query) == "" {
+			c.JSON(http.StatusBadRequest, apiError("INVALID_QUERY", "query is required"))
+			return
+		}
+		if payload.Limit <= 0 {
+			payload.Limit = 12
+		}
+
+		status, body, err := callExtractorSearch(extractorBaseURL, httpClient, payload.Query, payload.Limit)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, apiError("SEARCH_FAILED", "extractor unavailable"))
+			return
+		}
+		c.Data(status, "application/json", body)
 	})
 
 	r.POST("/api/v1/jobs", func(c *gin.Context) {

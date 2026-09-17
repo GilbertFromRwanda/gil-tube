@@ -265,6 +265,20 @@ async fn mux_with_ffmpeg(
         .arg(video_path)
         .arg("-i")
         .arg(audio_path)
+        // Independently-fetched video/audio streams are rarely exactly the
+        // same duration (typically tens to hundreds of ms apart). Explicit
+        // mapping avoids ambiguity about which stream from which input is
+        // used, -shortest trims to the shorter one instead of leaving a
+        // trailing gap of silence/frozen video, and avoid_negative_ts keeps
+        // both tracks' timestamps aligned to zero for players (VLC included)
+        // that are strict about presentation timestamps.
+        .arg("-map")
+        .arg("0:v:0")
+        .arg("-map")
+        .arg("1:a:0")
+        .arg("-shortest")
+        .arg("-avoid_negative_ts")
+        .arg("make_zero")
         .arg("-c")
         .arg("copy");
 
@@ -726,7 +740,17 @@ async fn download_granule_once(
         .map_err(|e| DownloadError::Failed(format!("chunk request failed: {e}"), true))?;
 
     let status = response.status();
-    if status != StatusCode::PARTIAL_CONTENT && !status.is_success() {
+    if status == StatusCode::OK {
+        // The server ignored our Range header and returned the full body
+        // instead of the requested slice. Writing that at this granule's
+        // offset would silently corrupt the file (it's not the bytes that
+        // belong there), so this must fail loudly rather than "succeed".
+        return Err(DownloadError::Failed(
+            "server returned a full response instead of the requested byte range".to_string(),
+            true,
+        ));
+    }
+    if status != StatusCode::PARTIAL_CONTENT {
         let retryable = status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS;
         return Err(DownloadError::Failed(format!("server returned status {status} for chunk"), retryable));
     }
