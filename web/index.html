@@ -260,6 +260,26 @@
         padding: 0.75rem 1rem;
         font-size: 0.9rem;
       }
+      .preview-placeholder {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 0.6rem;
+        min-height: 220px;
+        text-align: center;
+        color: var(--muted);
+        border-style: dashed;
+      }
+      .preview-placeholder .placeholder-icon {
+        font-size: 2rem;
+        opacity: 0.7;
+      }
+      .preview-placeholder p {
+        margin: 0;
+        font-size: 0.9rem;
+        font-weight: 500;
+      }
       .preview-layout {
         display: flex;
         flex-direction: column;
@@ -415,8 +435,6 @@
 
       <div class="layout">
         <div class="layout-main">
-          <div id="searchResults" class="search-results hidden"></div>
-
           <button id="pasteLinkToggle" class="link-button" type="button">+ Paste a link directly</button>
 
           <div id="pasteLinkCard" class="card hidden">
@@ -426,9 +444,16 @@
             </form>
             <div id="loadError" class="error-banner hidden" style="margin-top: 0.9rem;"></div>
           </div>
+
+          <div id="searchResults" class="search-results hidden"></div>
         </div>
 
         <div class="layout-side">
+          <div id="previewPlaceholder" class="card preview-placeholder">
+            <div class="placeholder-icon">🎬</div>
+            <p>Click on a video to view</p>
+          </div>
+
           <div id="previewCard" class="card hidden">
             <div class="preview-layout">
               <div id="previewEmbed" class="preview-embed hidden">
@@ -494,6 +519,7 @@
         if (willShow) urlInput.focus();
       });
 
+      const previewPlaceholder = document.getElementById('previewPlaceholder');
       const previewCard = document.getElementById('previewCard');
       const previewEmbed = document.getElementById('previewEmbed');
       const previewIframe = document.getElementById('previewIframe');
@@ -772,6 +798,7 @@
 
         showVideoPreview(info.id);
 
+        previewPlaceholder.classList.add('hidden');
         previewCard.classList.remove('hidden');
       }
 
