@@ -1,6 +1,7 @@
 import concurrent.futures
 import json as jsonlib
 import logging
+import os
 import time
 
 from flask import Flask, jsonify, request
@@ -16,7 +17,12 @@ cache = build_cache_from_env()
 EXTRACT_TIMEOUT_SECONDS = 30
 CACHE_TTL_SECONDS = 600
 SEARCH_TIMEOUT_SECONDS = 20
-SEARCH_CACHE_TTL_SECONDS = 300
+# Longer than the extraction cache: a search result list (titles/thumbnails)
+# goes stale far more slowly than "is this exact video still downloadable
+# right now", so it's safe to cache for longer to make the video list feel
+# fast on repeat/shared searches. Configurable since "how fresh do search
+# results need to be" is a product judgment call, not a fixed constant.
+SEARCH_CACHE_TTL_SECONDS = int(os.environ.get("SEARCH_CACHE_TTL_SECONDS", str(6 * 60 * 60)))
 MAX_SEARCH_RESULTS = 25
 MAX_SEARCH_QUERY_LENGTH = 200
 
@@ -231,7 +237,7 @@ def search():
         limit = 12
     limit = max(1, min(limit, MAX_SEARCH_RESULTS))
 
-    key = cache_key(f"search:{limit}:{query.lower()}")
+    key = cache_key(f"{limit}:{query.lower()}", prefix="search")
     cached = cache.get(key)
     if cached is not None:
         log_event("search_cache_hit", query=query)
