@@ -47,8 +47,38 @@ PYTHON_BIN=python3
 command -v python3 >/dev/null 2>&1 || PYTHON_BIN=python
 
 WEB_URL="http://localhost:3000"
+
+# python -m http.server binds all interfaces, so the LAN IP works too - but
+# only browsing via that IP (not "localhost") lets the web UI's "Connect
+# the mobile app" QR code fill in a phone-reachable address automatically.
+detect_lan_ip() {
+  case "$(uname -s)" in
+    Linux*)
+      hostname -I 2>/dev/null | awk '{print $1}'
+      ;;
+    Darwin*)
+      ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null
+      ;;
+    MINGW*|MSYS*|CYGWIN*)
+      # The interface holding the default route is the one actually used to
+      # reach the network - picking "any non-loopback IPv4" instead often
+      # grabs a Docker/WSL/Hyper-V virtual adapter's IP, which a phone can't
+      # reach.
+      powershell.exe -NoProfile -Command \
+        "\$route = Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Sort-Object -Property RouteMetric | Select-Object -First 1; if (\$route) { (Get-NetIPAddress -InterfaceIndex \$route.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).IPAddress }" \
+        2>/dev/null | tr -d '\r'
+      ;;
+  esac
+}
+LAN_IP="$(detect_lan_ip || true)"
+
 echo ""
 echo "==> Backend is up. Serving the web UI at $WEB_URL"
+if [[ -n "${LAN_IP:-}" ]]; then
+  echo "    On your phone (same Wi-Fi/network): http://$LAN_IP:3000"
+  echo "    Open it from there (not localhost) so the 📱 \"Connect the mobile app\""
+  echo "    QR code fills in an address your phone can actually reach."
+fi
 echo "    Press Ctrl+C to stop the web UI. Backend services keep running in the background;"
 echo "    run '$DC down' to stop those too."
 echo ""
