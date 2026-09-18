@@ -709,7 +709,12 @@
     <div id="previewOverlay" class="preview-overlay hidden"></div>
 
     <script>
-      const API_BASE = 'http://localhost:8081';
+      // Derived from whatever hostname loaded this page (not hardcoded to
+      // "localhost") so the UI keeps working when opened via a LAN IP or
+      // from another device - matching computeMobileApiUrl() below, since
+      // both need the same answer to "how do I reach the api service from
+      // here".
+      const API_BASE = `${window.location.protocol}//${window.location.hostname}:8081`;
 
       const themeToggle = document.getElementById('themeToggle');
       const mobileConnectToggle = document.getElementById('mobileConnectToggle');
@@ -760,7 +765,7 @@
       function computeMobileApiUrl() {
         const hostname = window.location.hostname;
         const isLocal = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
-        return { url: `${window.location.protocol}//${hostname}:8081`, isLocal };
+        return { url: API_BASE, isLocal };
       }
 
       // qrcode-generator (kazuhikoarase) is a plain global-var IIFE build,
