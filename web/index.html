@@ -122,8 +122,18 @@
              sticky positioning racing the page's own scroll. */
           max-height: calc(100vh - 150px);
           overflow-y: auto;
-          padding-right: 6px;
+          padding-right: 10px;
+          /* Firefox */
+          scrollbar-width: thin;
+          scrollbar-color: var(--border) transparent;
         }
+        .layout-main::-webkit-scrollbar { width: 7px; }
+        .layout-main::-webkit-scrollbar-track { background: transparent; }
+        .layout-main::-webkit-scrollbar-thumb {
+          background: var(--border);
+          border-radius: 999px;
+        }
+        .layout-main::-webkit-scrollbar-thumb:hover { background: var(--primary); }
         .layout-side {
           flex: 0 0 440px;
           position: sticky;
