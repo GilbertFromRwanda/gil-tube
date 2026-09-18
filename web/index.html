@@ -946,6 +946,36 @@
         searchResults.innerHTML = results.map((result, index) => resultCardHtml(result, index)).join('');
         searchResults.classList.remove('hidden');
         searchResults.querySelectorAll('.result-card').forEach(wireResultCard);
+        prewarmTopResults(results);
+      }
+
+      // Full extraction (needed to actually download) is the slow part -
+      // typically several seconds, since it resolves direct CDN URLs and
+      // runs YouTube's signature-decipher logic per format. Search itself is
+      // fast (flat/lightweight), so most of a click's latency is that first
+      // extraction. Firing it in the background for the top few results as
+      // soon as they're shown means it's often already cached by the time
+      // the user actually clicks one. Deliberately only called from a fresh
+      // render (a new search, or the initial cached-videos load) and not
+      // from appendSearchResults (infinite scroll) - unbounded background
+      // extraction as the user scrolls would defeat the point.
+      const PREWARM_COUNT = 3;
+      const PREWARM_STAGGER_MS = 400;
+
+      function prewarmTopResults(results) {
+        results.slice(0, PREWARM_COUNT).forEach((result, index) => {
+          if (!result.url) return;
+          setTimeout(() => {
+            fetch(`${API_BASE}/api/v1/preview`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ url: result.url }),
+            }).catch(() => {
+              // Fire-and-forget: worst case, this video just isn't cached
+              // yet and the user's eventual click pays the normal cost.
+            });
+          }, index * PREWARM_STAGGER_MS);
+        });
       }
 
       function appendSearchResults(results) {
