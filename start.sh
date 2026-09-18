@@ -75,9 +75,13 @@ LAN_IP="$(detect_lan_ip || true)"
 echo ""
 echo "==> Backend is up. Serving the web UI at $WEB_URL"
 if [[ -n "${LAN_IP:-}" ]]; then
-  echo "    On your phone (same Wi-Fi/network): http://$LAN_IP:3000"
-  echo "    Open it from there (not localhost) so the 📱 \"Connect the mobile app\""
+  echo "    Also reachable at http://$LAN_IP:3000 - that's the address the browser"
+  echo "    will open (instead of localhost) so the 📱 \"Connect the mobile app\""
   echo "    QR code fills in an address your phone can actually reach."
+else
+  echo "    Could not detect a LAN IP - the 📱 \"Connect the mobile app\" QR code"
+  echo "    will show localhost, which only works on this machine. Find your"
+  echo "    LAN IP manually and open the page from http://<that IP>:3000 instead."
 fi
 echo "    Press Ctrl+C to stop the web UI. Backend services keep running in the background;"
 echo "    run '$DC down' to stop those too."
@@ -92,8 +96,13 @@ open_browser() {
   esac
 }
 
+OPEN_URL="$WEB_URL"
+if [[ -n "${LAN_IP:-}" ]]; then
+  OPEN_URL="http://$LAN_IP:3000"
+fi
+
 if [[ "$OPEN_BROWSER" -eq 1 ]]; then
-  ( sleep 1.5 && open_browser "$WEB_URL" ) &
+  ( sleep 1.5 && open_browser "$OPEN_URL" ) &
 fi
 
 cd web
