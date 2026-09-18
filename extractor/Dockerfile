@@ -1,5 +1,15 @@
 FROM python:3.12-slim
 
+# yt-dlp needs a JS runtime to solve YouTube's signature/PoToken challenges
+# on some clients; without one it falls back to slower, less reliable
+# extraction paths and can intermittently hang past our timeout. deno is the
+# runtime yt-dlp auto-detects and enables by default.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates unzip \
+    && curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh \
+    && apt-get purge -y --auto-remove curl unzip \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 COPY requirements.txt ./
