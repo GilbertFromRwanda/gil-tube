@@ -114,7 +114,7 @@ services:
     volumes:
       - downloads_data:/data/downloads
     healthcheck:
-      test: ["CMD", "/app/target/release/gil-tube-downloader", "--healthcheck"]
+      test: ["CMD", "/app/gil-tube-downloader", "--healthcheck"]
       interval: 10s
       timeout: 5s
       retries: 10

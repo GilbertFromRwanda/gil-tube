@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -519,6 +520,25 @@ func callExtractorSearch(extractorBaseURL string, httpClient *http.Client, query
 	return resp.StatusCode, body, nil
 }
 
+func callExtractorCachedSearches(extractorBaseURL string, httpClient *http.Client, limit int) (int, []byte, error) {
+	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/api/v1/cached-searches?limit=%d", extractorBaseURL, limit), nil)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, nil, err
+	}
+	return resp.StatusCode, body, nil
+}
+
 // sanitizeFilename strips a video title down to characters safe to embed in
 // an HTTP header value. Titles come from untrusted third-party content, so
 // this also blocks header-injection via embedded CR/LF/quote characters.
@@ -623,6 +643,22 @@ func setupRouterWithDeps(extractorBaseURL, downloaderBaseURL string, httpClient 
 		}
 
 		status, body, err := callExtractorSearch(extractorBaseURL, httpClient, payload.Query, payload.Limit)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, apiError("SEARCH_FAILED", "extractor unavailable"))
+			return
+		}
+		c.Data(status, "application/json", body)
+	})
+
+	r.GET("/api/v1/cached-searches", func(c *gin.Context) {
+		limit := 24
+		if raw := c.Query("limit"); raw != "" {
+			if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+				limit = parsed
+			}
+		}
+
+		status, body, err := callExtractorCachedSearches(extractorBaseURL, httpClient, limit)
 		if err != nil {
 			c.JSON(http.StatusBadGateway, apiError("SEARCH_FAILED", "extractor unavailable"))
 			return

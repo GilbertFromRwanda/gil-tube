@@ -25,6 +25,7 @@ SEARCH_TIMEOUT_SECONDS = 20
 SEARCH_CACHE_TTL_SECONDS = int(os.environ.get("SEARCH_CACHE_TTL_SECONDS", str(6 * 60 * 60)))
 MAX_SEARCH_RESULTS = 25
 MAX_SEARCH_QUERY_LENGTH = 200
+MAX_CACHED_VIDEOS = 50
 
 logger = logging.getLogger("extractor")
 logging.basicConfig(level=logging.INFO)
@@ -262,6 +263,34 @@ def search():
     cache.set(key, result, SEARCH_CACHE_TTL_SECONDS)
     log_event("search_completed", query=query, duration_ms=duration_ms, result_count=len(results))
     return jsonify(result)
+
+
+@app.get("/api/v1/cached-searches")
+def cached_searches():
+    try:
+        limit = int(request.args.get("limit", MAX_CACHED_VIDEOS))
+    except (TypeError, ValueError):
+        limit = MAX_CACHED_VIDEOS
+    limit = max(1, min(limit, MAX_CACHED_VIDEOS))
+
+    # Flattens every still-live cached search result set into one deduped
+    # video list, so the UI can show "what's already fast" without the
+    # caller needing to know which queries were previously searched.
+    videos = []
+    seen_ids = set()
+    for entry in cache.scan_values("search:"):
+        for result in (entry or {}).get("results", []):
+            video_id = result.get("id")
+            if not video_id or video_id in seen_ids:
+                continue
+            seen_ids.add(video_id)
+            videos.append(result)
+            if len(videos) >= limit:
+                break
+        if len(videos) >= limit:
+            break
+
+    return jsonify({"videos": videos})
 
 
 if __name__ == "__main__":

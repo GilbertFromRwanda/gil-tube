@@ -225,6 +225,44 @@ func TestSearchProxiesExtractorResults(t *testing.T) {
 	}
 }
 
+func TestCachedSearchesProxiesExtractorVideos(t *testing.T) {
+	extractor := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/cached-searches" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if r.URL.Query().Get("limit") != "5" {
+			t.Fatalf("expected limit to be forwarded, got %v", r.URL.Query().Get("limit"))
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"videos": []map[string]any{
+				{"id": "vid1", "title": "Cached video", "url": "https://www.youtube.com/watch?v=vid1"},
+			},
+		})
+	}))
+	defer extractor.Close()
+
+	router := setupRouter(extractor.URL, extractor.Client())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/cached-searches?limit=5", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	videos, ok := payload["videos"].([]any)
+	if !ok || len(videos) != 1 {
+		t.Fatalf("expected one cached video to be proxied through, got: %s", rec.Body.String())
+	}
+}
+
 func TestSelectFormatPairPicksBestVideoAndPairsAudio(t *testing.T) {
 	formats := []FormatEntry{
 		{ID: "137", Container: "mp4", VideoCodec: "avc1", Height: 1080, URL: "https://cdn.example.com/v1080.mp4"},

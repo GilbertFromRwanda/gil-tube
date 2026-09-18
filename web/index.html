@@ -158,6 +158,14 @@
         border-color: var(--primary);
         box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.15);
       }
+      .results-heading {
+        margin: 1.1rem 0 -0.4rem;
+        font-size: 0.75rem;
+        font-weight: 700;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
       .search-results {
         margin-top: 1.1rem;
         display: grid;
@@ -445,6 +453,7 @@
             <div id="loadError" class="error-banner hidden" style="margin-top: 0.9rem;"></div>
           </div>
 
+          <p id="resultsHeading" class="results-heading hidden"></p>
           <div id="searchResults" class="search-results hidden"></div>
         </div>
 
@@ -502,6 +511,7 @@
       const searchInput = document.getElementById('searchInput');
       const searchButton = document.getElementById('searchButton');
       const searchError = document.getElementById('searchError');
+      const resultsHeading = document.getElementById('resultsHeading');
       const searchResults = document.getElementById('searchResults');
 
       const pasteLinkToggle = document.getElementById('pasteLinkToggle');
@@ -628,6 +638,16 @@
         return div.innerHTML;
       }
 
+      function setResultsHeading(text) {
+        if (!text) {
+          resultsHeading.classList.add('hidden');
+          resultsHeading.textContent = '';
+          return;
+        }
+        resultsHeading.textContent = text;
+        resultsHeading.classList.remove('hidden');
+      }
+
       async function runSearch(query) {
         searchError.classList.add('hidden');
         searchError.textContent = '';
@@ -649,9 +669,11 @@
             searchError.textContent = message;
             searchError.classList.remove('hidden');
             searchResults.classList.add('hidden');
+            setResultsHeading('');
             return;
           }
 
+          setResultsHeading(`Results for "${query}"`);
           renderSearchResults(data.results || []);
         } catch (err) {
           searchError.textContent = `Connection error: ${err.message}`;
@@ -667,10 +689,30 @@
         runSearch(searchInput.value.trim());
       });
 
-      // Seed the page with results instead of a blank state on first load.
+      // Seed the page with whatever's already cached (instant, no live
+      // search needed) instead of a blank state. Only falls back to a live
+      // search on a cold cache (nothing searched yet anywhere).
       const DEFAULT_SEARCH_QUERY = 'Rwanda SDA music';
-      searchInput.value = DEFAULT_SEARCH_QUERY;
-      runSearch(DEFAULT_SEARCH_QUERY);
+
+      async function loadInitialResults() {
+        searchInput.value = DEFAULT_SEARCH_QUERY;
+        try {
+          const response = await fetch(`${API_BASE}/api/v1/cached-searches?limit=24`);
+          if (response.ok) {
+            const data = await response.json();
+            if (data.videos && data.videos.length) {
+              setResultsHeading('Cached videos');
+              renderSearchResults(data.videos);
+              return;
+            }
+          }
+        } catch (err) {
+          // Fall through to a live search below.
+        }
+        runSearch(DEFAULT_SEARCH_QUERY);
+      }
+
+      loadInitialResults();
 
       function renderSearchResults(results) {
         if (!results.length) {

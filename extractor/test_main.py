@@ -165,3 +165,39 @@ def test_search_maps_timeout_to_search_timeout_code():
         response = client.post('/api/v1/search', json={'query': 'slow query'})
         assert response.status_code == 504
         assert response.get_json()['error']['code'] == 'SEARCH_TIMEOUT'
+
+
+def test_cached_searches_returns_empty_list_when_nothing_cached():
+    main.cache = main.build_cache_from_env()
+    client = main.app.test_client()
+    response = client.get('/api/v1/cached-searches')
+    assert response.status_code == 200
+    assert response.get_json()['videos'] == []
+
+
+def test_cached_searches_flattens_and_dedupes_across_queries():
+    main.cache = main.build_cache_from_env()
+    with patch.object(main, 'run_search', return_value=FAKE_SEARCH_INFO):
+        client = main.app.test_client()
+        client.post('/api/v1/search', json={'query': 'lofi beats'})
+        # Same underlying videos cached under a second query too - the
+        # aggregated view must not list vid1/vid2 twice.
+        client.post('/api/v1/search', json={'query': 'chill beats'})
+
+        response = client.get('/api/v1/cached-searches')
+        assert response.status_code == 200
+        videos = response.get_json()['videos']
+        ids = [v['id'] for v in videos]
+        assert ids.count('vid1') == 1
+        assert ids.count('vid2') == 1
+
+
+def test_cached_searches_respects_limit():
+    main.cache = main.build_cache_from_env()
+    with patch.object(main, 'run_search', return_value=FAKE_SEARCH_INFO):
+        client = main.app.test_client()
+        client.post('/api/v1/search', json={'query': 'lofi beats'})
+
+        response = client.get('/api/v1/cached-searches?limit=1')
+        assert response.status_code == 200
+        assert len(response.get_json()['videos']) == 1
