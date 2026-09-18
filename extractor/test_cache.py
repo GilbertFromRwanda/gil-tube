@@ -27,3 +27,16 @@ def test_in_memory_cache_round_trip():
     assert cache.get(key) is None
     cache.set(key, {"results": []}, ttl_seconds=60)
     assert cache.get(key) == {"results": []}
+
+
+def test_in_memory_cache_scan_values_filters_by_prefix_and_expiry():
+    cache = InMemoryCache()
+    cache.set(cache_key("a", prefix="search"), {"v": "a"}, ttl_seconds=60)
+    cache.set(cache_key("b", prefix="search"), {"v": "b"}, ttl_seconds=60)
+    cache.set(cache_key("c", prefix="extract"), {"v": "c"}, ttl_seconds=60)
+    # Expired entries must not be returned even though they're still present
+    # in the underlying store until the next get() prunes them.
+    cache.set(cache_key("d", prefix="search"), {"v": "d"}, ttl_seconds=-1)
+
+    values = cache.scan_values("search:")
+    assert {v["v"] for v in values} == {"a", "b"}
