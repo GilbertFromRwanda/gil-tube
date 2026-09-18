@@ -1,0 +1,45 @@
+import { DarkTheme, DefaultTheme, NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { StatusBar } from 'expo-status-bar';
+import React from 'react';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { RootStackParamList } from './src/navigation';
+import { DownloadScreen } from './src/screens/DownloadScreen';
+import { PreviewScreen } from './src/screens/PreviewScreen';
+import { SearchScreen } from './src/screens/SearchScreen';
+import { SettingsScreen } from './src/screens/SettingsScreen';
+import { palettes, ThemeProvider, useTheme } from './src/theme/theme';
+
+const Stack = createNativeStackNavigator<RootStackParamList>();
+
+function Navigator() {
+  const { theme, colors } = useTheme();
+  const navTheme = theme === 'dark' ? DarkTheme : DefaultTheme;
+
+  return (
+    <NavigationContainer
+      theme={{
+        ...navTheme,
+        colors: { ...navTheme.colors, background: colors.bg, card: colors.panel, text: colors.text, border: colors.border, primary: colors.primary },
+      }}
+    >
+      <Stack.Navigator screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="Search" component={SearchScreen} />
+        <Stack.Screen name="Preview" component={PreviewScreen} options={{ headerShown: true, title: 'Preview' }} />
+        <Stack.Screen name="Download" component={DownloadScreen} options={{ headerShown: true, title: 'Download' }} />
+        <Stack.Screen name="Settings" component={SettingsScreen} options={{ headerShown: true, title: 'Settings' }} />
+      </Stack.Navigator>
+      <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
+    </NavigationContainer>
+  );
+}
+
+export default function App() {
+  return (
+    <SafeAreaProvider>
+      <ThemeProvider>
+        <Navigator />
+      </ThemeProvider>
+    </SafeAreaProvider>
+  );
+}
