@@ -520,8 +520,8 @@ func callExtractorSearch(extractorBaseURL string, httpClient *http.Client, query
 	return resp.StatusCode, body, nil
 }
 
-func callExtractorCachedSearches(extractorBaseURL string, httpClient *http.Client, limit int) (int, []byte, error) {
-	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/api/v1/cached-searches?limit=%d", extractorBaseURL, limit), nil)
+func callExtractorCachedSearches(extractorBaseURL string, httpClient *http.Client, limit, offset int) (int, []byte, error) {
+	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/api/v1/cached-searches?limit=%d&offset=%d", extractorBaseURL, limit, offset), nil)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -657,8 +657,14 @@ func setupRouterWithDeps(extractorBaseURL, downloaderBaseURL string, httpClient 
 				limit = parsed
 			}
 		}
+		offset := 0
+		if raw := c.Query("offset"); raw != "" {
+			if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 {
+				offset = parsed
+			}
+		}
 
-		status, body, err := callExtractorCachedSearches(extractorBaseURL, httpClient, limit)
+		status, body, err := callExtractorCachedSearches(extractorBaseURL, httpClient, limit, offset)
 		if err != nil {
 			c.JSON(http.StatusBadGateway, apiError("SEARCH_FAILED", "extractor unavailable"))
 			return

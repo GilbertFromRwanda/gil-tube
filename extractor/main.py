@@ -26,6 +26,8 @@ SEARCH_CACHE_TTL_SECONDS = int(os.environ.get("SEARCH_CACHE_TTL_SECONDS", str(6 
 MAX_SEARCH_RESULTS = 25
 MAX_SEARCH_QUERY_LENGTH = 200
 MAX_CACHED_VIDEOS = 50
+CACHED_VIDEOS_SCAN_CEILING = 500
+MAX_CACHED_QUERIES = 20
 
 logger = logging.getLogger("extractor")
 logging.basicConfig(level=logging.INFO)
@@ -273,25 +275,49 @@ def cached_searches():
         limit = MAX_CACHED_VIDEOS
     limit = max(1, min(limit, MAX_CACHED_VIDEOS))
 
+    try:
+        offset = max(0, int(request.args.get("offset", 0)))
+    except (TypeError, ValueError):
+        offset = 0
+
     # Flattens every still-live cached search result set into one deduped
     # video list, so the UI can show "what's already fast" without the
-    # caller needing to know which queries were previously searched.
+    # caller needing to know which queries were previously searched. Capped
+    # independently of the page `limit` so a large cache doesn't turn every
+    # paged request into a full unbounded scan. Also collects the distinct
+    # query strings themselves in the same pass (no extra Redis round trip)
+    # so the UI can offer them as "recent search" suggestions while typing.
     videos = []
     seen_ids = set()
+    queries = []
+    seen_queries = set()
     for entry in cache.scan_values("search:"):
+        query_text = (entry or {}).get("query")
+        if query_text and query_text.lower() not in seen_queries and len(queries) < MAX_CACHED_QUERIES:
+            seen_queries.add(query_text.lower())
+            queries.append(query_text)
+
         for result in (entry or {}).get("results", []):
             video_id = result.get("id")
             if not video_id or video_id in seen_ids:
                 continue
             seen_ids.add(video_id)
             videos.append(result)
-            if len(videos) >= limit:
+            if len(videos) >= CACHED_VIDEOS_SCAN_CEILING:
                 break
-        if len(videos) >= limit:
+        if len(videos) >= CACHED_VIDEOS_SCAN_CEILING:
             break
 
-    return jsonify({"videos": videos})
+    page = videos[offset : offset + limit]
+    return jsonify(
+        {
+            "videos": page,
+            "total": len(videos),
+            "has_more": offset + len(page) < len(videos),
+            "queries": queries,
+        }
+    )
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=9000)
+    app.run(host="0.0.0.0", port=9000, threaded=True)

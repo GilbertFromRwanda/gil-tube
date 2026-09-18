@@ -201,3 +201,35 @@ def test_cached_searches_respects_limit():
         response = client.get('/api/v1/cached-searches?limit=1')
         assert response.status_code == 200
         assert len(response.get_json()['videos']) == 1
+
+
+def test_cached_searches_pagination_via_offset():
+    main.cache = main.build_cache_from_env()
+    with patch.object(main, 'run_search', return_value=FAKE_SEARCH_INFO):
+        client = main.app.test_client()
+        client.post('/api/v1/search', json={'query': 'lofi beats'})
+
+        first_page = client.get('/api/v1/cached-searches?limit=1&offset=0').get_json()
+        assert first_page['total'] == 2
+        assert first_page['has_more'] is True
+        assert len(first_page['videos']) == 1
+
+        second_page = client.get('/api/v1/cached-searches?limit=1&offset=1').get_json()
+        assert second_page['has_more'] is False
+        assert len(second_page['videos']) == 1
+        assert first_page['videos'][0]['id'] != second_page['videos'][0]['id']
+
+
+def test_cached_searches_includes_distinct_query_suggestions():
+    main.cache = main.build_cache_from_env()
+    with patch.object(main, 'run_search', return_value=FAKE_SEARCH_INFO):
+        client = main.app.test_client()
+        client.post('/api/v1/search', json={'query': 'lofi beats'})
+        client.post('/api/v1/search', json={'query': 'chill beats'})
+        # Same query again, different case - must not appear twice.
+        client.post('/api/v1/search', json={'query': 'Lofi Beats'})
+
+        response = client.get('/api/v1/cached-searches')
+        queries = response.get_json()['queries']
+        assert len(queries) == 2
+        assert {q.lower() for q in queries} == {'lofi beats', 'chill beats'}

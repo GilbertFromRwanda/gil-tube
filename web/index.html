@@ -55,9 +55,13 @@
         flex: 1 1 260px;
         min-width: 0;
       }
-      .topbar-search input[type="text"] {
+      .search-input-wrap {
+        position: relative;
         flex: 1 1 auto;
         min-width: 0;
+      }
+      .topbar-search input[type="text"] {
+        width: 100%;
         padding: 0.6rem 1.1rem;
         border-radius: 999px;
       }
@@ -66,6 +70,25 @@
         border-radius: 999px;
         flex-shrink: 0;
       }
+      .search-suggestions {
+        position: absolute;
+        top: calc(100% + 6px);
+        left: 0;
+        right: 0;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        box-shadow: var(--shadow);
+        overflow: hidden;
+        z-index: 20;
+      }
+      .search-suggestion-item {
+        padding: 0.6rem 1rem;
+        font-size: 0.85rem;
+        cursor: pointer;
+        color: var(--text);
+      }
+      .search-suggestion-item:hover { background: var(--panel-alt); color: var(--primary); }
       .page {
         display: flex;
         justify-content: center;
@@ -309,6 +332,37 @@
         height: 100%;
         border: 0;
       }
+      .expand-toggle {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        z-index: 2;
+        padding: 0.3rem 0.55rem;
+        border-radius: 8px;
+        background: rgba(0, 0, 0, 0.55);
+        color: #fff;
+        font-size: 0.95rem;
+        line-height: 1;
+      }
+      .expand-toggle:hover:not(:disabled) { background: rgba(0, 0, 0, 0.8); filter: none; }
+      .preview-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(2, 6, 23, 0.75);
+        backdrop-filter: blur(4px);
+        -webkit-backdrop-filter: blur(4px);
+        z-index: 50;
+      }
+      #previewCard.expanded {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: min(920px, 94vw);
+        max-height: 92vh;
+        overflow-y: auto;
+        z-index: 51;
+      }
       .preview-meta h2 {
         margin: 0 0 0.35rem;
         font-size: 1.1rem;
@@ -431,7 +485,10 @@
           <h1>Gil Tube</h1>
         </div>
         <form id="searchForm" class="topbar-search">
-          <input id="searchInput" type="text" placeholder="Search YouTube…" />
+          <div class="search-input-wrap">
+            <input id="searchInput" type="text" placeholder="Search YouTube…" autocomplete="off" />
+            <div id="searchSuggestions" class="search-suggestions hidden"></div>
+          </div>
           <button id="searchButton" type="submit">Search</button>
         </form>
       </div>
@@ -467,6 +524,7 @@
             <div class="preview-layout">
               <div id="previewEmbed" class="preview-embed hidden">
                 <div id="previewIframe"></div>
+                <button id="expandPreviewButton" class="expand-toggle" type="button" title="Expand">⤢</button>
               </div>
               <div class="preview-body">
                 <div class="preview-meta">
@@ -504,11 +562,14 @@
     </div>
     </div>
 
+    <div id="previewOverlay" class="preview-overlay hidden"></div>
+
     <script>
       const API_BASE = 'http://localhost:8081';
 
       const searchForm = document.getElementById('searchForm');
       const searchInput = document.getElementById('searchInput');
+      const searchSuggestions = document.getElementById('searchSuggestions');
       const searchButton = document.getElementById('searchButton');
       const searchError = document.getElementById('searchError');
       const resultsHeading = document.getElementById('resultsHeading');
@@ -537,6 +598,21 @@
       const previewSub = document.getElementById('previewSub');
       const formatSelect = document.getElementById('formatSelect');
       const downloadButton = document.getElementById('downloadButton');
+      const expandPreviewButton = document.getElementById('expandPreviewButton');
+      const previewOverlay = document.getElementById('previewOverlay');
+
+      function setPreviewExpanded(expanded) {
+        previewCard.classList.toggle('expanded', expanded);
+        previewOverlay.classList.toggle('hidden', !expanded);
+        expandPreviewButton.textContent = expanded ? '⤡' : '⤢';
+        expandPreviewButton.title = expanded ? 'Collapse' : 'Expand';
+      }
+
+      expandPreviewButton.addEventListener('click', () => {
+        setPreviewExpanded(!previewCard.classList.contains('expanded'));
+      });
+
+      previewOverlay.addEventListener('click', () => setPreviewExpanded(false));
 
       const jobCard = document.getElementById('jobCard');
       const statusPill = document.getElementById('statusPill');
@@ -653,6 +729,11 @@
         searchError.textContent = '';
         if (!query) return;
 
+        // A live search returns one fixed batch, not a paged feed - disable
+        // cached-video infinite scroll so scrolling here doesn't try to
+        // "load more" of the previous cached view.
+        cachedVideosHasMore = false;
+
         searchButton.disabled = true;
         searchButton.textContent = 'Searching…';
 
@@ -693,16 +774,32 @@
       // search needed) instead of a blank state. Only falls back to a live
       // search on a cold cache (nothing searched yet anywhere).
       const DEFAULT_SEARCH_QUERY = 'Rwanda SDA music';
+      const CACHED_PAGE_SIZE = 24;
+
+      // Infinite scroll only applies to the cached-videos view: a live
+      // search returns one fixed batch from yt-dlp per query, not a paged
+      // feed, so there's nothing to page through there.
+      let cachedVideosOffset = 0;
+      let cachedVideosHasMore = false;
+      let loadingMoreCached = false;
+
+      // Populated from /api/v1/cached-searches' `queries` field and offered
+      // as "recent search" suggestions while typing - see wireSearchSuggestions.
+      let cachedQueries = [];
 
       async function loadInitialResults() {
         searchInput.value = DEFAULT_SEARCH_QUERY;
+        cachedVideosHasMore = false;
         try {
-          const response = await fetch(`${API_BASE}/api/v1/cached-searches?limit=24`);
+          const response = await fetch(`${API_BASE}/api/v1/cached-searches?limit=${CACHED_PAGE_SIZE}&offset=0`);
           if (response.ok) {
             const data = await response.json();
+            cachedQueries = data.queries || [];
             if (data.videos && data.videos.length) {
               setResultsHeading('Cached videos');
               renderSearchResults(data.videos);
+              cachedVideosOffset = data.videos.length;
+              cachedVideosHasMore = !!data.has_more;
               return;
             }
           }
@@ -712,41 +809,127 @@
         runSearch(DEFAULT_SEARCH_QUERY);
       }
 
+      function renderSearchSuggestions(matches) {
+        if (!matches.length) {
+          searchSuggestions.classList.add('hidden');
+          searchSuggestions.innerHTML = '';
+          return;
+        }
+        searchSuggestions.innerHTML = matches.map((q) => `<div class="search-suggestion-item">${escapeHtml(q)}</div>`).join('');
+        searchSuggestions.classList.remove('hidden');
+        searchSuggestions.querySelectorAll('.search-suggestion-item').forEach((item, i) => {
+          // mousedown (not click) fires before the input's blur handler
+          // hides the dropdown, so the selection still registers.
+          item.addEventListener('mousedown', (event) => {
+            event.preventDefault();
+            searchSuggestions.classList.add('hidden');
+            searchInput.value = matches[i];
+            runSearch(matches[i]);
+          });
+        });
+      }
+
+      function wireSearchSuggestions() {
+        searchInput.addEventListener('input', () => {
+          const value = searchInput.value.trim().toLowerCase();
+          const matches = value
+            ? cachedQueries.filter((q) => q.toLowerCase().includes(value))
+            : cachedQueries;
+          renderSearchSuggestions(matches.slice(0, 8));
+        });
+        searchInput.addEventListener('focus', () => {
+          if (!searchInput.value.trim()) renderSearchSuggestions(cachedQueries.slice(0, 8));
+        });
+        searchInput.addEventListener('blur', () => {
+          setTimeout(() => searchSuggestions.classList.add('hidden'), 150);
+        });
+      }
+      wireSearchSuggestions();
+
+      async function loadMoreCachedVideos() {
+        if (loadingMoreCached || !cachedVideosHasMore) return;
+        loadingMoreCached = true;
+        try {
+          const response = await fetch(
+            `${API_BASE}/api/v1/cached-searches?limit=${CACHED_PAGE_SIZE}&offset=${cachedVideosOffset}`
+          );
+          if (response.ok) {
+            const data = await response.json();
+            const videos = data.videos || [];
+            appendSearchResults(videos);
+            cachedVideosOffset += videos.length;
+            cachedVideosHasMore = !!data.has_more;
+          }
+        } catch (err) {
+          // Ignore - the user can just scroll again to retry.
+        } finally {
+          loadingMoreCached = false;
+        }
+      }
+
+      window.addEventListener('scroll', () => {
+        if (!cachedVideosHasMore || loadingMoreCached) return;
+        const nearBottom = window.innerHeight + window.scrollY >= document.body.offsetHeight - 600;
+        if (nearBottom) loadMoreCachedVideos();
+      });
+
       loadInitialResults();
 
+      // currentResultsList backs the click handlers below: cards reference
+      // it by index rather than closing over a per-call `results` array, so
+      // appendSearchResults() (infinite scroll) can add more cards without
+      // invalidating the indices of cards already on the page.
+      let currentResultsList = [];
+
+      function resultCardHtml(result, index) {
+        const durationLabel = formatDuration(result.duration);
+        const meta = result.uploader || '';
+        return `
+          <div class="result-card" data-index="${index}">
+            <div class="result-thumb-wrap">
+              <img class="result-thumb" src="${escapeHtml(result.thumbnail || '')}" alt="" loading="lazy" />
+              ${durationLabel ? `<span class="result-duration">${escapeHtml(durationLabel)}</span>` : ''}
+            </div>
+            <div class="result-info">
+              <p class="result-title">${escapeHtml(result.title || 'Untitled')}</p>
+              <p class="result-meta">${escapeHtml(meta)}</p>
+            </div>
+          </div>`;
+      }
+
+      function wireResultCard(card) {
+        card.addEventListener('click', () => {
+          const result = currentResultsList[Number(card.dataset.index)];
+          if (!result || !result.url) return;
+          selectSearchResult(result);
+        });
+      }
+
       function renderSearchResults(results) {
+        currentResultsList = results.slice();
         if (!results.length) {
           searchResults.innerHTML = '<p class="subtitle">No results.</p>';
           searchResults.classList.remove('hidden');
           return;
         }
 
-        searchResults.innerHTML = results
-          .map((result, index) => {
-            const durationLabel = formatDuration(result.duration);
-            const meta = result.uploader || '';
-            return `
-              <div class="result-card" data-index="${index}">
-                <div class="result-thumb-wrap">
-                  <img class="result-thumb" src="${escapeHtml(result.thumbnail || '')}" alt="" loading="lazy" />
-                  ${durationLabel ? `<span class="result-duration">${escapeHtml(durationLabel)}</span>` : ''}
-                </div>
-                <div class="result-info">
-                  <p class="result-title">${escapeHtml(result.title || 'Untitled')}</p>
-                  <p class="result-meta">${escapeHtml(meta)}</p>
-                </div>
-              </div>`;
-          })
-          .join('');
+        searchResults.innerHTML = results.map((result, index) => resultCardHtml(result, index)).join('');
         searchResults.classList.remove('hidden');
+        searchResults.querySelectorAll('.result-card').forEach(wireResultCard);
+      }
 
-        searchResults.querySelectorAll('.result-card').forEach((card) => {
-          card.addEventListener('click', () => {
-            const result = results[Number(card.dataset.index)];
-            if (!result || !result.url) return;
-            selectSearchResult(result);
-          });
-        });
+      function appendSearchResults(results) {
+        if (!results.length) return;
+        const startIndex = currentResultsList.length;
+        currentResultsList = currentResultsList.concat(results);
+
+        const html = results.map((result, i) => resultCardHtml(result, startIndex + i)).join('');
+        searchResults.insertAdjacentHTML('beforeend', html);
+
+        const cards = searchResults.querySelectorAll('.result-card');
+        for (let i = startIndex; i < cards.length; i++) {
+          wireResultCard(cards[i]);
+        }
       }
 
       // Search results already carry title/thumbnail/uploader/duration, so
