@@ -136,10 +136,11 @@ export function SearchScreen({ navigation }: Props) {
           returnKeyType="search"
         />
         <Pressable
+          disabled={loading}
           onPress={() => runSearch(query)}
-          style={[styles.searchButton, { backgroundColor: colors.primary }]}
+          style={[styles.searchButton, { backgroundColor: colors.primary, opacity: loading ? 0.7 : 1 }]}
         >
-          <Text style={styles.searchButtonText}>Search</Text>
+          <Text style={styles.searchButtonText}>{loading ? 'Searching…' : 'Search'}</Text>
         </Pressable>
       </View>
 
