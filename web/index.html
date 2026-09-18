@@ -763,13 +763,18 @@
         return { url: `${window.location.protocol}//${hostname}:8081`, isLocal };
       }
 
+      // qrcode-generator (kazuhikoarase) is a plain global-var IIFE build,
+      // safe to run directly from a <script> tag. The "qrcode" npm package
+      // used earlier ships CommonJS-only browser builds (`require(...)`
+      // calls with no UMD wrapper) that throw when loaded this way -
+      // that's why the QR code silently failed before.
       let qrCodeLibPromise = null;
       function loadQrCodeLib() {
-        if (window.QRCode) return Promise.resolve();
+        if (window.qrcode) return Promise.resolve();
         if (!qrCodeLibPromise) {
           qrCodeLibPromise = new Promise((resolve, reject) => {
             const script = document.createElement('script');
-            script.src = 'https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js';
+            script.src = 'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js';
             script.onload = () => resolve();
             script.onerror = () => reject(new Error('Could not load the QR code library.'));
             document.head.appendChild(script);
@@ -790,16 +795,16 @@
         }
         loadQrCodeLib()
           .then(() => {
-            const canvas = document.createElement('canvas');
-            QRCode.toCanvas(canvas, url, { width: 200, margin: 1 }, (err) => {
-              if (err) {
-                mobileConnectQr.innerHTML = '';
-                mobileConnectQr.textContent = 'QR code unavailable - use the address above.';
-                return;
-              }
-              mobileConnectQr.innerHTML = '';
-              mobileConnectQr.appendChild(canvas);
-            });
+            const qr = qrcode(0, 'M');
+            qr.addData(url);
+            qr.make();
+            const img = document.createElement('img');
+            img.src = qr.createDataURL(6);
+            img.alt = 'QR code for the API address';
+            img.style.maxWidth = '100%';
+            img.style.height = 'auto';
+            mobileConnectQr.innerHTML = '';
+            mobileConnectQr.appendChild(img);
           })
           .catch(() => {
             mobileConnectQr.innerHTML = '';
