@@ -562,9 +562,20 @@ func sanitizeFilename(name string) string {
 	return result
 }
 
-func corsMiddleware(allowedOrigin string) gin.HandlerFunc {
+// corsMiddleware reflects whatever Origin the browser sent, rather than
+// checking it against one fixed configured value: the web UI can be
+// opened from localhost, a LAN IP, or (on a phone) a different device
+// entirely, and none of those are known ahead of time. This is safe here
+// because the API has no cookie/session-based auth for a permissive CORS
+// policy to leak, and the one genuinely sensitive operation (fetching an
+// arbitrary URL) is independently guarded by SSRF validation on the
+// download target itself, regardless of the caller's origin.
+func corsMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", allowedOrigin)
+		if origin := c.GetHeader("Origin"); origin != "" {
+			c.Header("Access-Control-Allow-Origin", origin)
+			c.Header("Vary", "Origin")
+		}
 		c.Header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Content-Type")
 		if c.Request.Method == http.MethodOptions {
@@ -582,7 +593,7 @@ func setupRouter(extractorBaseURL string, httpClient *http.Client) *gin.Engine {
 func setupRouterWithDeps(extractorBaseURL, downloaderBaseURL string, httpClient *http.Client, jobs JobStore, publisher EventPublisher) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
-	r.Use(corsMiddleware(envOrDefault("ALLOWED_ORIGIN", "http://localhost:3000")))
+	r.Use(corsMiddleware())
 
 	// Unbounded client for streaming large files through the file-download
 	// proxy below; the extraction httpClient's timeout would otherwise cut

@@ -68,7 +68,6 @@ services:
       DOWNLOADER_URL: http://downloader:8000
       DATABASE_URL: postgres://gil_tube:gil_tube@postgres:5432/gil_tube?sslmode=disable
       NATS_URL: nats://nats:4222
-      ALLOWED_ORIGIN: http://localhost:3000
       GIN_MODE: release
     depends_on:
       postgres:

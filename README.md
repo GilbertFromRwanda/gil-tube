@@ -53,7 +53,11 @@ backend too.
 This repository is intentionally a working foundation rather than a full production product.
 
 - API exposes health, preview, and job lifecycle routes, with SSRF-safe URL
-  validation, a structured error envelope, and a CORS policy for the web UI.
+  validation, a structured error envelope, and a CORS policy that reflects
+  the caller's origin (there's no cookie/session auth for a permissive
+  policy to expose, and the sensitive operation - fetching an arbitrary URL
+  - is independently SSRF-checked regardless of who's calling), so the web
+  UI works the same from `localhost`, a LAN IP, or a phone.
 - Extractor uses real `yt-dlp` extraction with SSRF protection, a Redis (or
   in-memory) cache, and normalized error codes.
 - Downloader is an async Rust service that streams downloads with resume,
@@ -94,7 +98,6 @@ progress, and save/share the finished file. See
 | Service | Variable | Purpose |
 |---|---|---|
 | api | `EXTRACTOR_URL`, `DOWNLOADER_URL` | Upstream service addresses |
-| api | `ALLOWED_ORIGIN` | CORS origin allowed to call the API (default `http://localhost:3000`) |
 | extractor | `REDIS_URL` | Extraction cache backend; falls back to in-memory if unset/unreachable |
 | downloader | `MAX_CHUNKS_PER_DOWNLOAD` | Parallel range requests per stream when the server supports it (default 8) |
 | downloader | `MAX_DOWNLOAD_BYTES`, `MAX_GLOBAL_CONCURRENCY` | Size cap and concurrent-download limit |
