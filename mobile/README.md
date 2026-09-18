@@ -21,10 +21,15 @@ The app can't guess where your `api` container is reachable from — a
 phone's "localhost" means the phone itself, not your dev machine. On
 first launch, open the ⚙️ Settings screen and set the API address:
 
+- **Scan the QR code** — open the web UI (`web/index.html`) *from the
+  same LAN-reachable address your phone will use* (not `localhost`),
+  tap the 📱 icon in its topbar, and scan the QR code it shows with
+  Settings → "Scan QR from web UI". This is the easiest path since it
+  reads the correct LAN IP straight from the browser's own address bar.
 - **Android emulator**: `http://10.0.2.2:8081`
 - **iOS simulator**: `http://localhost:8081`
-- **Physical device**: `http://<your computer's LAN IP>:8081` (same
-  network as the phone; find the IP with `ipconfig`/`ifconfig`)
+- **Physical device (manual)**: `http://<your computer's LAN IP>:8081`
+  (same network as the phone; find the IP with `ipconfig`/`ifconfig`)
 
 The address is saved locally (AsyncStorage) and reused on future launches.
 
@@ -35,7 +40,8 @@ The address is saved locally (AsyncStorage) and reused on future launches.
 - `src/screens/` — `SearchScreen` (grid + infinite scroll over cached
   videos, live search), `PreviewScreen` (format picker, start a job),
   `DownloadScreen` (polls job + progress every second, IDM-style segment
-  bars, mux phase, cancel, save/share the finished file), `SettingsScreen`.
+  bars, mux phase, cancel, save/share the finished file), `SettingsScreen`,
+  `ScanQrScreen` (camera QR scan, via `expo-camera`).
 - `src/theme/theme.tsx` — dark/light palette mirroring `web/index.html`'s
   CSS variables, persisted with AsyncStorage.
 

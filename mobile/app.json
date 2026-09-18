@@ -22,7 +22,13 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-sharing"
+      "expo-sharing",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Gil Tube uses the camera to scan the QR code shown by the web UI, so it can find your API server without typing an address."
+        }
+      ]
     ]
   }
 }
