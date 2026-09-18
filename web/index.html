@@ -113,7 +113,17 @@
           flex-direction: row;
           align-items: flex-start;
         }
-        .layout-main { flex: 1 1 auto; min-width: 0; }
+        .layout-main {
+          flex: 1 1 auto;
+          min-width: 0;
+          /* Its own scroll region so results (and infinite-scroll loading of
+             cached videos) never pushes the page itself, keeping the
+             preview/download column always in view without relying on
+             sticky positioning racing the page's own scroll. */
+          max-height: calc(100vh - 150px);
+          overflow-y: auto;
+          padding-right: 6px;
+        }
         .layout-side {
           flex: 0 0 440px;
           position: sticky;
@@ -499,7 +509,12 @@
       <div id="searchError" class="error-banner hidden"></div>
 
       <div class="layout">
-        <div class="layout-main">
+        <div id="layoutMain" class="layout-main">
+          <p id="resultsHeading" class="results-heading hidden"></p>
+          <div id="searchResults" class="search-results hidden"></div>
+        </div>
+
+        <div class="layout-side">
           <button id="pasteLinkToggle" class="link-button" type="button">+ Paste a link directly</button>
 
           <div id="pasteLinkCard" class="card hidden">
@@ -510,11 +525,6 @@
             <div id="loadError" class="error-banner hidden" style="margin-top: 0.9rem;"></div>
           </div>
 
-          <p id="resultsHeading" class="results-heading hidden"></p>
-          <div id="searchResults" class="search-results hidden"></div>
-        </div>
-
-        <div class="layout-side">
           <div id="previewPlaceholder" class="card preview-placeholder">
             <div class="placeholder-icon">🎬</div>
             <p>Click on a video to view</p>
@@ -574,6 +584,7 @@
       const searchError = document.getElementById('searchError');
       const resultsHeading = document.getElementById('resultsHeading');
       const searchResults = document.getElementById('searchResults');
+      const layoutMain = document.getElementById('layoutMain');
 
       const pasteLinkToggle = document.getElementById('pasteLinkToggle');
       const pasteLinkCard = document.getElementById('pasteLinkCard');
@@ -867,11 +878,20 @@
         }
       }
 
-      window.addEventListener('scroll', () => {
+      // The first column scrolls internally on desktop (its own overflow-y,
+      // see .layout-main), so its own scroll events - not the window's -
+      // are what fire there. On narrow screens it has no internal scroll
+      // (falls back to the page scrolling normally), so the window listener
+      // covers that case. Both stay attached; only one actually fires scroll
+      // events at any given viewport width.
+      function checkInfiniteScroll() {
         if (!cachedVideosHasMore || loadingMoreCached) return;
-        const nearBottom = window.innerHeight + window.scrollY >= document.body.offsetHeight - 600;
-        if (nearBottom) loadMoreCachedVideos();
-      });
+        const nearBottomOfColumn = layoutMain.scrollTop + layoutMain.clientHeight >= layoutMain.scrollHeight - 600;
+        const nearBottomOfPage = window.innerHeight + window.scrollY >= document.body.offsetHeight - 600;
+        if (nearBottomOfColumn || nearBottomOfPage) loadMoreCachedVideos();
+      }
+      window.addEventListener('scroll', checkInfiniteScroll);
+      layoutMain.addEventListener('scroll', checkInfiniteScroll);
 
       loadInitialResults();
 
