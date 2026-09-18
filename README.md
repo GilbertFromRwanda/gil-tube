@@ -8,6 +8,7 @@ Gil Tube is a monorepo for a self-hosted YouTube media download platform. The re
 - `extractor/` — Python metadata extraction service
 - `downloader/` — Rust download worker
 - `web/` — minimal browser UI
+- `mobile/` — React Native (Expo) client for iOS/Android
 - `shared/` — JSON schema and shared contracts
 - `infra/` — deployment assets later added as the system matures
 
@@ -79,6 +80,14 @@ This repository is intentionally a working foundation rather than a full product
 5. When the job reaches `COMPLETED`, a **Save file** link appears, backed by
    `GET /api/v1/jobs/:id/file`, which streams the finished file from the
    downloader's storage through the API.
+
+## Mobile app
+
+`mobile/` is an Expo (React Native + TypeScript) client that talks to the
+same `api` service — search, preview, pick a format, download with live
+progress, and save/share the finished file. See
+[mobile/README.md](mobile/README.md) for setup; a phone can't reach
+`localhost`, so the API address is set from the app's Settings screen.
 
 ## Key environment variables
 
