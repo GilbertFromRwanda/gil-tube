@@ -6,6 +6,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { RootStackParamList } from './src/navigation';
 import { DownloadScreen } from './src/screens/DownloadScreen';
 import { PreviewScreen } from './src/screens/PreviewScreen';
+import { ScanQrScreen } from './src/screens/ScanQrScreen';
 import { SearchScreen } from './src/screens/SearchScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 import { palettes, ThemeProvider, useTheme } from './src/theme/theme';
@@ -28,6 +29,11 @@ function Navigator() {
         <Stack.Screen name="Preview" component={PreviewScreen} options={{ headerShown: true, title: 'Preview' }} />
         <Stack.Screen name="Download" component={DownloadScreen} options={{ headerShown: true, title: 'Download' }} />
         <Stack.Screen name="Settings" component={SettingsScreen} options={{ headerShown: true, title: 'Settings' }} />
+        <Stack.Screen
+          name="ScanQr"
+          component={ScanQrScreen}
+          options={{ headerShown: true, title: 'Scan QR', presentation: 'modal' }}
+        />
       </Stack.Navigator>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
     </NavigationContainer>

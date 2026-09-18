@@ -78,6 +78,64 @@
         flex-shrink: 0;
       }
       .theme-toggle:hover:not(:disabled) { background: var(--panel-alt); filter: brightness(1.15); }
+      .modal-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1.25rem;
+        background: rgba(2, 6, 23, 0.6);
+      }
+      .modal-overlay.hidden { display: none; }
+      .modal-card {
+        position: relative;
+        width: 100%;
+        max-width: 320px;
+        padding: 1.5rem;
+        border-radius: 16px;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        box-shadow: var(--shadow);
+        text-align: center;
+      }
+      .modal-card h2 { margin: 0 0 0.6rem; font-size: 1.05rem; }
+      .modal-close {
+        position: absolute;
+        top: 0.6rem;
+        right: 0.6rem;
+        width: 28px;
+        height: 28px;
+        border-radius: 999px;
+        background: var(--panel-alt);
+        border: 1px solid var(--border);
+        color: var(--muted);
+        font-size: 0.85rem;
+      }
+      .modal-hint { color: var(--muted); font-size: 0.82rem; line-height: 1.5; margin: 0 0 1rem; }
+      .modal-qr {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 200px;
+        margin-bottom: 1rem;
+        padding: 12px;
+        background: #fff;
+        border-radius: 10px;
+      }
+      .modal-qr canvas { display: block; }
+      .modal-url-label { color: var(--muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 0.3rem; }
+      .modal-url {
+        display: block;
+        padding: 0.5rem 0.7rem;
+        border-radius: 8px;
+        background: var(--panel-alt);
+        border: 1px solid var(--border);
+        font-size: 0.85rem;
+        word-break: break-all;
+        user-select: all;
+      }
       .topbar {
         position: sticky;
         top: 0;
@@ -560,9 +618,21 @@
           </div>
           <button id="searchButton" type="submit">Search</button>
         </form>
+        <button id="mobileConnectToggle" class="theme-toggle" type="button" title="Connect the mobile app">📱</button>
         <button id="themeToggle" class="theme-toggle" type="button" title="Toggle light/dark theme">🌙</button>
       </div>
     </header>
+
+    <div id="mobileConnectModal" class="modal-overlay hidden">
+      <div class="modal-card">
+        <button id="mobileConnectClose" class="modal-close" type="button" aria-label="Close">✕</button>
+        <h2>Connect the mobile app</h2>
+        <p id="mobileConnectHint" class="modal-hint"></p>
+        <div id="mobileConnectQr" class="modal-qr"></div>
+        <p class="modal-url-label">API address</p>
+        <code id="mobileConnectUrl" class="modal-url"></code>
+      </div>
+    </div>
 
     <div class="page">
     <div class="app">
@@ -638,6 +708,12 @@
       const API_BASE = 'http://localhost:8081';
 
       const themeToggle = document.getElementById('themeToggle');
+      const mobileConnectToggle = document.getElementById('mobileConnectToggle');
+      const mobileConnectModal = document.getElementById('mobileConnectModal');
+      const mobileConnectClose = document.getElementById('mobileConnectClose');
+      const mobileConnectHint = document.getElementById('mobileConnectHint');
+      const mobileConnectQr = document.getElementById('mobileConnectQr');
+      const mobileConnectUrl = document.getElementById('mobileConnectUrl');
       const searchForm = document.getElementById('searchForm');
       const searchInput = document.getElementById('searchInput');
       const searchSuggestions = document.getElementById('searchSuggestions');
@@ -670,6 +746,70 @@
       themeToggle.addEventListener('click', () => {
         const current = document.documentElement.getAttribute('data-theme') || 'dark';
         applyTheme(current === 'light' ? 'dark' : 'light');
+      });
+
+      // The mobile app can't reach "localhost" on this machine, but
+      // window.location.hostname is exactly the address THIS browser used
+      // to reach the page - so if this page was opened from the phone (or
+      // from this computer's LAN IP), that same hostname is guaranteed to
+      // be reachable for the API too, on port 8081.
+      function computeMobileApiUrl() {
+        const hostname = window.location.hostname;
+        const isLocal = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+        return { url: `${window.location.protocol}//${hostname}:8081`, isLocal };
+      }
+
+      let qrCodeLibPromise = null;
+      function loadQrCodeLib() {
+        if (window.QRCode) return Promise.resolve();
+        if (!qrCodeLibPromise) {
+          qrCodeLibPromise = new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = 'https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js';
+            script.onload = () => resolve();
+            script.onerror = () => reject(new Error('Could not load the QR code library.'));
+            document.head.appendChild(script);
+          });
+        }
+        return qrCodeLibPromise;
+      }
+
+      function openMobileConnectModal() {
+        const { url, isLocal } = computeMobileApiUrl();
+        mobileConnectUrl.textContent = url;
+        mobileConnectModal.classList.remove('hidden');
+
+        if (isLocal) {
+          mobileConnectHint.textContent =
+            'This page is open locally, so this address only works on this computer. Open this same page from your phone\'s browser using this computer\'s LAN IP instead (e.g. http://192.168.1.20:3000), then reopen this dialog to get a scannable address.';
+          mobileConnectQr.innerHTML = '';
+          return;
+        }
+
+        mobileConnectHint.textContent =
+          'In the Gil Tube app, open Settings and tap "Scan QR" to fill this in automatically - or type the address below by hand.';
+        mobileConnectQr.innerHTML = '';
+        loadQrCodeLib()
+          .then(() => {
+            const canvas = document.createElement('canvas');
+            QRCode.toCanvas(canvas, url, { width: 200, margin: 1 }, (err) => {
+              if (err) {
+                mobileConnectQr.textContent = 'QR code unavailable - use the address below.';
+                return;
+              }
+              mobileConnectQr.innerHTML = '';
+              mobileConnectQr.appendChild(canvas);
+            });
+          })
+          .catch(() => {
+            mobileConnectQr.textContent = 'QR code unavailable (offline?) - use the address below.';
+          });
+      }
+
+      mobileConnectToggle.addEventListener('click', openMobileConnectModal);
+      mobileConnectClose.addEventListener('click', () => mobileConnectModal.classList.add('hidden'));
+      mobileConnectModal.addEventListener('click', (event) => {
+        if (event.target === mobileConnectModal) mobileConnectModal.classList.add('hidden');
       });
 
       pasteLinkToggle.addEventListener('click', () => {
