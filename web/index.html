@@ -128,14 +128,17 @@
       .modal-url-label { color: var(--muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 0.3rem; }
       .modal-url {
         display: block;
+        width: 100%;
         padding: 0.5rem 0.7rem;
         border-radius: 8px;
         background: var(--panel-alt);
         border: 1px solid var(--border);
+        color: var(--text);
+        font-family: inherit;
         font-size: 0.85rem;
-        word-break: break-all;
-        user-select: all;
+        box-sizing: border-box;
       }
+      .modal-edit-hint { color: var(--muted); font-size: 0.72rem; margin: 0.4rem 0 0; }
       .topbar {
         position: sticky;
         top: 0;
@@ -630,7 +633,8 @@
         <p id="mobileConnectHint" class="modal-hint"></p>
         <div id="mobileConnectQr" class="modal-qr"></div>
         <p class="modal-url-label">API address</p>
-        <code id="mobileConnectUrl" class="modal-url"></code>
+        <input id="mobileConnectUrl" class="modal-url" type="text" autocomplete="off" spellcheck="false" />
+        <p class="modal-edit-hint">Not right? Edit it (e.g. swap in your computer's LAN IP) - the QR code updates as you type.</p>
       </div>
     </div>
 
@@ -774,27 +778,23 @@
         return qrCodeLibPromise;
       }
 
-      function openMobileConnectModal() {
-        const { url, isLocal } = computeMobileApiUrl();
-        mobileConnectUrl.textContent = url;
-        mobileConnectModal.classList.remove('hidden');
-
-        if (isLocal) {
-          mobileConnectHint.textContent =
-            'This page is open locally, so this address only works on this computer. Open this same page from your phone\'s browser using this computer\'s LAN IP instead (e.g. http://192.168.1.20:3000), then reopen this dialog to get a scannable address.';
+      // Renders a QR code for whatever's currently in the address field.
+      // Called both when the modal opens and on every edit, so typing in a
+      // corrected LAN IP (when the page was opened via localhost) updates
+      // the code live instead of requiring a reopen.
+      function renderMobileConnectQr(url) {
+        if (!/^https?:\/\/\S+$/i.test(url)) {
           mobileConnectQr.innerHTML = '';
+          mobileConnectQr.textContent = 'Type a valid address above to generate a QR code.';
           return;
         }
-
-        mobileConnectHint.textContent =
-          'In the Gil Tube app, open Settings and tap "Scan QR" to fill this in automatically - or type the address below by hand.';
-        mobileConnectQr.innerHTML = '';
         loadQrCodeLib()
           .then(() => {
             const canvas = document.createElement('canvas');
             QRCode.toCanvas(canvas, url, { width: 200, margin: 1 }, (err) => {
               if (err) {
-                mobileConnectQr.textContent = 'QR code unavailable - use the address below.';
+                mobileConnectQr.innerHTML = '';
+                mobileConnectQr.textContent = 'QR code unavailable - use the address above.';
                 return;
               }
               mobileConnectQr.innerHTML = '';
@@ -802,14 +802,35 @@
             });
           })
           .catch(() => {
-            mobileConnectQr.textContent = 'QR code unavailable (offline?) - use the address below.';
+            mobileConnectQr.innerHTML = '';
+            mobileConnectQr.textContent = 'QR code unavailable (offline?) - use the address above.';
           });
+      }
+
+      function openMobileConnectModal() {
+        const { url, isLocal } = computeMobileApiUrl();
+        mobileConnectUrl.value = url;
+        mobileConnectModal.classList.remove('hidden');
+
+        mobileConnectHint.textContent = isLocal
+          ? 'This page is open locally, so this address only works on this computer. Either edit it below to your computer\'s LAN IP (e.g. http://192.168.1.20:8081 - find it with ipconfig/ifconfig), or reopen this page from that LAN IP so it comes pre-filled correctly.'
+          : 'In the Gil Tube app, open Settings and tap "Scan QR" to fill this in automatically - or type the address below by hand.';
+
+        renderMobileConnectQr(url);
+        mobileConnectUrl.focus();
+        mobileConnectUrl.select();
       }
 
       mobileConnectToggle.addEventListener('click', openMobileConnectModal);
       mobileConnectClose.addEventListener('click', () => mobileConnectModal.classList.add('hidden'));
       mobileConnectModal.addEventListener('click', (event) => {
         if (event.target === mobileConnectModal) mobileConnectModal.classList.add('hidden');
+      });
+
+      let mobileConnectDebounce = null;
+      mobileConnectUrl.addEventListener('input', () => {
+        if (mobileConnectDebounce) clearTimeout(mobileConnectDebounce);
+        mobileConnectDebounce = setTimeout(() => renderMobileConnectQr(mobileConnectUrl.value.trim()), 300);
       });
 
       pasteLinkToggle.addEventListener('click', () => {
