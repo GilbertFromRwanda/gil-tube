@@ -353,6 +353,16 @@ fn is_retryable(err: &DownloadError) -> bool {
     err.retryable()
 }
 
+/// Classifies a non-2xx HTTP response as worth retrying. 403 is included
+/// alongside the usual 5xx/429: on an unexpired, correctly-signed CDN URL
+/// (verified separately, since we only reach this point after a successful
+/// probe), a 403 is most often a transient edge-server hiccup rather than a
+/// deterministic "this URL will never work" - retrying it costs little and
+/// resolves the common case instead of failing the whole download outright.
+fn is_retryable_status(status: StatusCode) -> bool {
+    status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS || status == StatusCode::FORBIDDEN
+}
+
 fn backoff_duration(attempt: u32) -> Duration {
     let base_ms = 500u64 * 2u64.saturating_pow(attempt.saturating_sub(1).min(6) as u32);
     let jitter_ms = rand::thread_rng().gen_range(0..250);
@@ -545,8 +555,7 @@ async fn probe_range_support(client: &Client, url: &url::Url) -> Result<RangePro
     } else if status.is_success() {
         Ok(RangeProbe { total_size: response.content_length().unwrap_or(0), supports_ranges: false })
     } else {
-        let retryable = status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS;
-        Err(DownloadError::Failed(format!("server returned status {status} during probe"), retryable))
+        Err(DownloadError::Failed(format!("server returned status {status} during probe"), is_retryable_status(status)))
     }
 }
 
@@ -751,8 +760,7 @@ async fn download_granule_once(
         ));
     }
     if status != StatusCode::PARTIAL_CONTENT {
-        let retryable = status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS;
-        return Err(DownloadError::Failed(format!("server returned status {status} for chunk"), retryable));
+        return Err(DownloadError::Failed(format!("server returned status {status} for chunk"), is_retryable_status(status)));
     }
 
     let mut file = tokio::fs::OpenOptions::new()
@@ -814,8 +822,7 @@ async fn attempt_download_sequential(
     } else if status.is_success() {
         0
     } else {
-        let retryable = status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS;
-        return Err(DownloadError::Failed(format!("server returned status {status}"), retryable));
+        return Err(DownloadError::Failed(format!("server returned status {status}"), is_retryable_status(status)));
     };
 
     if let Some(content_length) = response.content_length() {
