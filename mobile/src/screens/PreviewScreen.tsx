@@ -1,8 +1,17 @@
 import { Picker } from '@react-native-picker/picker';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import WebView from 'react-native-webview';
+import {
+  ActivityIndicator,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from 'react-native';
+import YoutubePlayer from 'react-native-youtube-iframe';
 import { createJob, preview } from '../api/client';
 import { PreviewInfo } from '../api/types';
 import { useTheme } from '../theme/theme';
@@ -13,6 +22,7 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Preview'>;
 
 export function PreviewScreen({ route, navigation }: Props) {
   const { colors } = useTheme();
+  const { width: windowWidth } = useWindowDimensions();
   const { result, url: paramUrl } = route.params;
   const url = result?.url || paramUrl || '';
 
@@ -55,6 +65,9 @@ export function PreviewScreen({ route, navigation }: Props) {
     .filter((f) => f.id && (f.height || f.container))
     .sort((a, b) => (b.height || 0) - (a.height || 0));
 
+  const embedWidth = windowWidth - 32;
+  const embedHeight = embedWidth * (9 / 16);
+
   const startDownload = async () => {
     setStarting(true);
     setError('');
@@ -75,15 +88,8 @@ export function PreviewScreen({ route, navigation }: Props) {
   return (
     <ScrollView style={{ backgroundColor: colors.bg }} contentContainerStyle={styles.container}>
       {videoId ? (
-        <View style={[styles.embed, { backgroundColor: '#000' }]}>
-          <WebView
-            source={{ uri: `https://www.youtube.com/embed/${videoId}?playsinline=1` }}
-            style={styles.embedWebview}
-            allowsFullscreenVideo
-            mediaPlaybackRequiresUserAction={false}
-            javaScriptEnabled
-            domStorageEnabled
-          />
+        <View style={[styles.embed, { backgroundColor: '#000', height: embedHeight }]}>
+          <YoutubePlayer height={embedHeight} width={embedWidth} videoId={videoId} play={false} />
         </View>
       ) : null}
 
