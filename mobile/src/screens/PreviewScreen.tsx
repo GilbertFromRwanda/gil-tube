@@ -1,8 +1,10 @@
+import { Picker } from '@react-native-picker/picker';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import WebView from 'react-native-webview';
 import { createJob, preview } from '../api/client';
-import { FormatEntry, PreviewInfo } from '../api/types';
+import { PreviewInfo } from '../api/types';
 import { useTheme } from '../theme/theme';
 import { formatDuration, formatLabel } from '../utils/format';
 import { RootStackParamList } from '../navigation';
@@ -43,6 +45,7 @@ export function PreviewScreen({ route, navigation }: Props) {
   }, [url]);
 
   const title = info?.title || result?.title || 'Untitled';
+  const videoId = info?.id || result?.id || '';
   const metaParts = [
     formatDuration(info?.duration ?? result?.duration),
     info?.uploader || result?.uploader,
@@ -71,9 +74,16 @@ export function PreviewScreen({ route, navigation }: Props) {
 
   return (
     <ScrollView style={{ backgroundColor: colors.bg }} contentContainerStyle={styles.container}>
-      {result?.thumbnail ? (
+      {videoId ? (
         <View style={[styles.embed, { backgroundColor: '#000' }]}>
-          <Image source={{ uri: result.thumbnail }} style={styles.embedImage} resizeMode="cover" />
+          <WebView
+            source={{ uri: `https://www.youtube.com/embed/${videoId}?playsinline=1` }}
+            style={styles.embedWebview}
+            allowsFullscreenVideo
+            mediaPlaybackRequiresUserAction={false}
+            javaScriptEnabled
+            domStorageEnabled
+          />
         </View>
       ) : null}
 
@@ -89,22 +99,19 @@ export function PreviewScreen({ route, navigation }: Props) {
       ) : (
         <>
           <Text style={[styles.sectionLabel, { color: colors.muted }]}>Format</Text>
-          <View style={styles.formatList}>
-            <FormatOption
-              label="Best available"
-              selected={selectedFormat === ''}
-              colors={colors}
-              onPress={() => setSelectedFormat('')}
-            />
-            {formats.map((format: FormatEntry) => (
-              <FormatOption
-                key={format.id}
-                label={formatLabel(format)}
-                selected={selectedFormat === format.id}
-                colors={colors}
-                onPress={() => setSelectedFormat(format.id)}
-              />
-            ))}
+          <View style={[styles.pickerWrap, { backgroundColor: colors.panel, borderColor: colors.border }]}>
+            <Picker
+              selectedValue={selectedFormat}
+              onValueChange={(value) => setSelectedFormat(value)}
+              style={[styles.picker, { color: colors.text }]}
+              dropdownIconColor={colors.text}
+              itemStyle={{ color: colors.text }}
+            >
+              <Picker.Item label="Best available" value="" />
+              {formats.map((format) => (
+                <Picker.Item key={format.id} label={formatLabel(format)} value={format.id} />
+              ))}
+            </Picker>
           </View>
 
           <Pressable
@@ -120,43 +127,24 @@ export function PreviewScreen({ route, navigation }: Props) {
   );
 }
 
-function FormatOption({
-  label,
-  selected,
-  colors,
-  onPress,
-}: {
-  label: string;
-  selected: boolean;
-  colors: ReturnType<typeof useTheme>['colors'];
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      style={[
-        styles.formatOption,
-        {
-          borderColor: selected ? colors.primary : colors.border,
-          backgroundColor: selected ? colors.panelAlt : colors.panel,
-        },
-      ]}
-    >
-      <Text style={{ color: colors.text, fontSize: 13 }}>{label}</Text>
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
   container: { padding: 16, paddingTop: 54 },
   embed: { width: '100%', aspectRatio: 16 / 9, borderRadius: 14, marginBottom: 14, overflow: 'hidden' },
-  embedImage: { width: '100%', height: '100%' },
+  embedWebview: { flex: 1, backgroundColor: '#000' },
   title: { fontSize: 17, fontWeight: '700' },
   meta: { fontSize: 12, marginTop: 4 },
   error: { marginTop: 12 },
   sectionLabel: { fontSize: 12, fontWeight: '600', marginTop: 18, marginBottom: 8 },
-  formatList: { gap: 8 },
-  formatOption: { borderWidth: 1, borderRadius: 10, paddingVertical: 10, paddingHorizontal: 12 },
+  pickerWrap: {
+    borderWidth: 1,
+    borderRadius: 10,
+    overflow: 'hidden',
+    // iOS renders Picker as an inline wheel that needs real height;
+    // Android renders it as a compact native dropdown row.
+    height: Platform.OS === 'ios' ? 170 : 48,
+    justifyContent: 'center',
+  },
+  picker: { width: '100%' },
   downloadButton: { marginTop: 22, borderRadius: 10, paddingVertical: 13, alignItems: 'center' },
   downloadButtonText: { color: '#04121f', fontWeight: '700', fontSize: 15 },
 });
