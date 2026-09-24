@@ -12,6 +12,7 @@ import {
 import { ApiNotConfiguredError, cachedSearches, search, searchSuggestions } from '../api/client';
 import { SearchResult } from '../api/types';
 import { ResultCard } from '../components/ResultCard';
+import { SkeletonGrid } from '../components/SkeletonGrid';
 import { useTheme } from '../theme/theme';
 import { RootStackParamList } from '../navigation';
 
@@ -203,8 +204,8 @@ export function SearchScreen({ navigation }: Props) {
 
       {heading ? <Text style={[styles.heading, { color: colors.muted }]}>{heading}</Text> : null}
 
-      {loading && results.length === 0 ? (
-        <ActivityIndicator style={{ marginTop: 24 }} color={colors.primary} />
+      {loading ? (
+        <SkeletonGrid colors={colors} />
       ) : (
         <FlatList
           data={results}
