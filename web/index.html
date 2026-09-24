@@ -18,6 +18,8 @@
         }
       })();
     </script>
+    <link rel="preconnect" href="https://www.youtube.com" />
+    <link rel="preconnect" href="https://i.ytimg.com" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
@@ -483,6 +485,37 @@
         height: 100%;
         border: 0;
       }
+      .preview-loading {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #0b1120 center / cover no-repeat;
+        pointer-events: none;
+        transition: opacity 0.2s ease;
+      }
+      .preview-loading::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.35);
+      }
+      .preview-loading.hidden { display: none; }
+      .preview-spinner {
+        position: relative;
+        width: 34px;
+        height: 34px;
+        border-radius: 50%;
+        border: 3px solid rgba(255, 255, 255, 0.35);
+        border-top-color: #fff;
+        animation: preview-spin 0.8s linear infinite;
+      }
+      @keyframes preview-spin { to { transform: rotate(360deg); } }
+      @media (prefers-reduced-motion: reduce) {
+        .preview-spinner { animation-duration: 2.4s; }
+      }
       .expand-toggle {
         position: absolute;
         top: 8px;
@@ -689,6 +722,9 @@
             <div class="preview-layout">
               <div id="previewEmbed" class="preview-embed hidden">
                 <div id="previewIframe"></div>
+                <div id="previewLoading" class="preview-loading hidden" aria-hidden="true">
+                  <div class="preview-spinner"></div>
+                </div>
                 <button id="expandPreviewButton" class="expand-toggle" type="button" title="Expand">⤢</button>
               </div>
               <div class="preview-body">
@@ -875,6 +911,7 @@
       const previewCard = document.getElementById('previewCard');
       const previewEmbed = document.getElementById('previewEmbed');
       const previewIframe = document.getElementById('previewIframe');
+      const previewLoading = document.getElementById('previewLoading');
       const previewTitle = document.getElementById('previewTitle');
       const previewSub = document.getElementById('previewSub');
       const formatSelect = document.getElementById('formatSelect');
@@ -923,6 +960,33 @@
       let ytPlayerReady = false;
       let pendingVideoId = null;
 
+      // Cover shown over the player until YouTube reports the video is
+      // cued/playing: the thumbnail we already have plus a spinner, so the
+      // embed is never just an empty black box. A timeout makes sure it can't
+      // stick around if the player never reports (e.g. an embed error).
+      let loadingCoverTimer = null;
+      function showLoadingCover(thumbnailUrl) {
+        // Thumbnail URLs come from third-party data and end up inside a CSS
+        // url("..."), so only accept a parsed https URL (URL#href percent-
+        // encodes quotes), never the raw string.
+        let safeUrl = '';
+        try {
+          const parsed = new URL(thumbnailUrl);
+          if (parsed.protocol === 'https:') safeUrl = parsed.href;
+        } catch (err) {
+          // Not a valid URL: fall back to the plain dark cover.
+        }
+        previewLoading.style.backgroundImage = safeUrl ? `url("${safeUrl}")` : '';
+        previewLoading.classList.remove('hidden');
+        if (loadingCoverTimer) clearTimeout(loadingCoverTimer);
+        loadingCoverTimer = setTimeout(hideLoadingCover, 10000);
+      }
+      function hideLoadingCover() {
+        if (loadingCoverTimer) clearTimeout(loadingCoverTimer);
+        loadingCoverTimer = null;
+        previewLoading.classList.add('hidden');
+      }
+
       window.onYouTubeIframeAPIReady = function () {
         ytApiReady = true;
         const videoId = pendingVideoId;
@@ -930,12 +994,14 @@
         if (videoId) showVideoPreview(videoId);
       };
 
-      function showVideoPreview(videoId) {
+      function showVideoPreview(videoId, thumbnailUrl) {
         if (!videoId) {
           previewEmbed.classList.add('hidden');
+          hideLoadingCover();
           return;
         }
         previewEmbed.classList.remove('hidden');
+        if (thumbnailUrl !== undefined) showLoadingCover(thumbnailUrl);
 
         if (!ytApiReady) {
           pendingVideoId = videoId;
@@ -952,7 +1018,13 @@
                 const queued = pendingVideoId;
                 pendingVideoId = null;
                 if (queued) ytPlayer.cueVideoById(queued);
+                else hideLoadingCover();
               },
+              // 5 = cued, 1 = playing: the new video is actually showing.
+              onStateChange: (event) => {
+                if (event.data === 5 || event.data === 1) hideLoadingCover();
+              },
+              onError: hideLoadingCover,
             },
           });
           return;
@@ -1414,7 +1486,7 @@
         if (info.uploader) metaParts.push(info.uploader);
         previewSub.textContent = metaParts.join(' · ');
 
-        showVideoPreview(info.id);
+        showVideoPreview(info.id, info.thumbnail || (info.id ? `https://i.ytimg.com/vi/${info.id}/hqdefault.jpg` : ''));
 
         previewPlaceholder.classList.add('hidden');
         previewCard.classList.remove('hidden');

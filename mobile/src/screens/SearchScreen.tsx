@@ -9,7 +9,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { ApiNotConfiguredError, cachedSearches, search, searchSuggestions } from '../api/client';
+import { ApiNotConfiguredError, cachedSearches, prewarmPreviews, search, searchSuggestions } from '../api/client';
 import { SearchResult } from '../api/types';
 import { DownloadsTray } from '../components/DownloadsTray';
 import { PreviewSheet } from '../components/PreviewSheet';
@@ -114,6 +114,18 @@ export function SearchScreen({ navigation }: Props) {
   useEffect(() => {
     loadInitial();
   }, [loadInitial]);
+
+  // Extract formats for the first few results in the background, so tapping
+  // one opens with its formats already loaded.
+  const firstUrls = results
+    .slice(0, 3)
+    .map((r) => r.url)
+    .filter(Boolean)
+    .join('|');
+  useEffect(() => {
+    if (loading || !firstUrls) return;
+    prewarmPreviews(firstUrls.split('|'));
+  }, [loading, firstUrls]);
 
   const runSearch = useCallback(async (text: string) => {
     if (!text.trim()) return;
