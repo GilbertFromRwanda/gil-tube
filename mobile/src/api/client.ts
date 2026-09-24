@@ -79,10 +79,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
-export function search(query: string, limit = 12): Promise<SearchResponse> {
+// `refresh` skips the server's cached copy of this search and fetches fresh
+// results (used by pull-to-refresh).
+export function search(query: string, limit = 12, refresh = false): Promise<SearchResponse> {
   return request('/api/v1/search', {
     method: 'POST',
-    body: JSON.stringify({ query, limit }),
+    body: JSON.stringify({ query, limit, refresh }),
   });
 }
 

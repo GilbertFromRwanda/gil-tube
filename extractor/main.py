@@ -250,8 +250,12 @@ def search():
         limit = 12
     limit = max(1, min(limit, MAX_SEARCH_RESULTS))
 
+    # `refresh` lets a pull-to-refresh skip the (long-lived) cached result and
+    # fetch fresh; the fresh result still overwrites the cache entry below.
+    refresh = payload.get("refresh") is True
+
     key = cache_key(f"{limit}:{query.lower()}", prefix="search")
-    cached = cache.get(key)
+    cached = None if refresh else cache.get(key)
     if cached is not None:
         log_event("search_cache_hit", query=query)
         return jsonify(cached)
