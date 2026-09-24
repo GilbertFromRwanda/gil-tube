@@ -37,8 +37,12 @@ The address is saved locally (AsyncStorage) and reused on future launches.
 
 - `src/api/client.ts` — thin fetch wrapper over the same `/api/v1/...`
   endpoints the web UI calls (search, preview, jobs, progress, file).
+- `src/components/PreviewSheet.tsx` — the bottom sheet that slides up when
+  you tap a video: plays it, lists formats in a picker, starts the job.
+  Plain `Modal` + `Animated` (drag the handle down, tap the backdrop, or
+  Android back to dismiss), so it needs no gesture/reanimated native deps.
 - `src/screens/` — `SearchScreen` (grid + infinite scroll over cached
-  videos, live search), `PreviewScreen` (format picker, start a job),
+  videos, live search, hosts the preview sheet),
   `DownloadScreen` (polls job + progress every second, IDM-style segment
   bars, mux phase, cancel, save/share the finished file), `SettingsScreen`,
   `ScanQrScreen` (camera QR scan, via `expo-camera`).
