@@ -1,9 +1,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Clipboard from 'expo-clipboard';
 import { Directory, File, Paths } from 'expo-file-system';
 import { Alert, Platform } from 'react-native';
 
 const SAVE_DIR_KEY = 'gil_tube_save_dir_uri';
-const IOS_FOLDER_NAME = 'Gil Tube';
+// Suggested name for the folder that holds saved downloads.
+export const DEFAULT_FOLDER_NAME = 'gil-tube';
+const IOS_FOLDER_NAME = DEFAULT_FOLDER_NAME;
 // Where the Android folder picker opens (the shared Downloads folder).
 const ANDROID_DOWNLOADS_URI = 'content://com.android.externalstorage.documents/document/primary%3ADownload';
 
@@ -13,16 +16,16 @@ const ANDROID_DOWNLOADS_URI = 'content://com.android.externalstorage.documents/d
 // app write there after the user grants access once through the system
 // picker, so the first save opens that picker already inside Downloads.
 // (Android 11+ refuses the Downloads root itself, so a subfolder such as
-// "Gil Tube" has to be created/picked - the picker's "new folder" button.)
+// "gil-tube" has to be created/picked - the picker's "new folder" button.)
 // expo-file-system takes a persistable URI permission for the choice, so it
 // keeps working after restarts and we never ask again - unless the folder is
 // deleted or access is revoked.
 //
 // iOS: a folder picked through the system picker is only accessible for the
-// current app session, so remembering it is impossible. Instead a "Gil Tube"
+// current app session, so remembering it is impossible. Instead a "gil-tube"
 // folder is created automatically in the app's Documents directory (no
 // prompt, ever); with file sharing enabled in Info.plist it shows up in
-// Files > On My iPhone > Gil Tube.
+// Files > On My iPhone > gil-tube.
 
 export class SaveCancelledError extends Error {
   constructor() {
@@ -97,30 +100,61 @@ export async function resolveSaveFolder(): Promise<Directory> {
 }
 
 // The system picker's wording is easy to misread, so say what to do first.
+// Android's "New folder" box belongs to the system, so an app can't pre-fill
+// it; the suggested name is put on the clipboard instead, ready to paste.
 function explainFolderChoice(): Promise<void> {
   return new Promise((resolve, reject) => {
     Alert.alert(
       'Save to your Downloads folder',
-      'Android needs your OK once. Pick a folder inside Downloads (tap "Create new folder" and name it Gil Tube), then tap "Use this folder". Videos will be saved there from now on, without asking again.',
+      `Android needs your OK once. In the next screen tap "Create new folder", paste the name "${DEFAULT_FOLDER_NAME}" (it's copied for you - long-press the box and tap Paste), then tap "Use this folder". Videos will be saved there from now on, without asking again.`,
       [
         { text: 'Cancel', style: 'cancel', onPress: () => reject(new SaveCancelledError()) },
-        { text: 'Choose folder', onPress: () => resolve() },
+        {
+          text: 'Choose folder',
+          onPress: () => {
+            Clipboard.setStringAsync(DEFAULT_FOLDER_NAME)
+              .catch(() => {})
+              .finally(() => resolve());
+          },
+        },
       ],
       { cancelable: true, onDismiss: () => reject(new SaveCancelledError()) },
     );
   });
 }
 
-// Puts a finished download (already on disk in app storage) into the folder.
+// True if a folder entry's URI points at a file called `name`. Android's
+// document URIs percent-encode the whole path, so decode before comparing.
+export function entryHasName(uri: string, name: string): boolean {
+  let decoded = uri;
+  try {
+    decoded = decodeURIComponent(uri);
+  } catch {
+    // Keep the raw URI; it may still match.
+  }
+  return decoded.endsWith(`/${name}`) || decoded.endsWith(`:${name}`);
+}
+
+function baseName(uri: string): string {
+  const last = uri.split('/').pop() ?? '';
+  try {
+    return decodeURIComponent(last);
+  } catch {
+    return last;
+  }
+}
+
+// Puts a finished download (already on disk in app storage) into the folder
+// and returns the saved file's URI ('' if it can't be located afterwards).
 // Copies on Android, where a large file can't be written straight to a
 // content:// folder by the download API; moves on iOS. If a file with that
 // name already exists it's saved as "name (xxxx).ext" instead of failing.
 export async function placeFileInFolder(
   cachedFileUri: string,
   folder: Directory,
-  baseName: string,
+  name: string,
   ext: string,
-): Promise<void> {
+): Promise<string> {
   const put = (file: File) => (Platform.OS === 'ios' ? file.move(folder) : file.copy(folder));
 
   let source = new File(cachedFileUri);
@@ -129,17 +163,23 @@ export async function placeFileInFolder(
   } catch (err) {
     if (!/exist/i.test(errorText(err))) throw err;
     const suffix = Date.now().toString(36).slice(-4);
-    const renamed = new File(Paths.cache, `${baseName} (${suffix}).${ext}`);
+    const renamed = new File(Paths.cache, `${name} (${suffix}).${ext}`);
     await source.move(renamed);
     source = renamed;
     await put(source);
   }
 
-  if (Platform.OS !== 'ios') {
-    try {
-      source.delete();
-    } catch {
-      // The cache copy is disposable; the OS will reclaim it eventually.
-    }
+  if (Platform.OS === 'ios') return source.uri;
+
+  const savedName = baseName(source.uri);
+  try {
+    source.delete();
+  } catch {
+    // The cache copy is disposable; the OS will reclaim it eventually.
+  }
+  try {
+    return folder.list().find((entry) => entryHasName(entry.uri, savedName))?.uri ?? '';
+  } catch {
+    return '';
   }
 }

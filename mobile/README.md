@@ -57,14 +57,18 @@ The address is saved locally (AsyncStorage) and reused on future launches.
 
 - **Android** — the shared Downloads folder. Android only lets an app write
   there after you grant access once, so the first "Save file" shows a short
-  explanation and opens the system picker inside Downloads (create a
-  "Gil Tube" folder there and tap "Use this folder"; Android 11+ refuses the
-  Downloads root itself). The choice is remembered, so later saves never ask.
-  Change or forget it under Settings › Save location.
-- **iOS** — a "Gil Tube" folder is created automatically in the app's
-  Documents (no prompt), visible in Files › On My iPhone › Gil Tube. iOS
+  explanation and opens the system picker inside Downloads: tap "Create new
+  folder", paste `gil-tube` (the app copies the name to the clipboard for you,
+  since Android doesn't let an app pre-fill that box), then "Use this
+  folder". Android 11+ refuses the Downloads root itself, hence the
+  subfolder. The choice is remembered, so later saves never ask. Change or
+  forget it under Settings › Save location.
+- **iOS** — a `gil-tube` folder is created automatically in the app's
+  Documents (no prompt), visible in Files › On My iPhone › gil-tube. iOS
   can't remember a picked folder across launches, so there's no picker.
   This needs a dev/production build; Expo Go shows Expo's own folder.
+- After saving, **Open** launches the file in your video/audio app (Android
+  intent; on iOS it opens the share sheet's "Open in…").
 
 ## Notes
 

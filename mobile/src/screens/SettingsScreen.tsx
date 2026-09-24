@@ -83,7 +83,7 @@ export function SettingsScreen({ navigation }: Props) {
       <Text style={[styles.hint, { color: colors.muted }]}>
         {canChooseFolder
           ? 'Downloaded videos are saved to your Downloads folder. You choose the folder once and it is remembered.'
-          : 'Downloaded videos are saved automatically in the Gil Tube folder in the Files app.'}
+          : 'Downloaded videos are saved automatically in the gil-tube folder in the Files app.'}
       </Text>
       <View style={[styles.folderBox, { backgroundColor: colors.panelAlt, borderColor: colors.border }]}>
         <Text style={{ color: folder ? colors.text : colors.muted }} numberOfLines={2}>

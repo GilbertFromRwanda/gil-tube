@@ -1,14 +1,14 @@
 // SDK 57's default expo-file-system export is the new File/Directory API;
 // `downloadAsync`/`cacheDirectory` still live under the /legacy subpath.
 import * as FileSystem from 'expo-file-system/legacy';
-import * as Sharing from 'expo-sharing';
 import React, { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { getJobFileUrl } from '../api/client';
 import { JobStatus } from '../api/types';
 import { DownloadItem, displayStatusOf, isActive, useDownloads } from '../downloads/DownloadsContext';
 import { useTheme } from '../theme/theme';
-import { folderLabel, placeFileInFolder, resolveSaveFolder, SaveCancelledError } from '../storage/saveLocation';
+import { openSavedFile } from '../storage/openFile';
+import { DEFAULT_FOLDER_NAME, folderLabel, placeFileInFolder, resolveSaveFolder, SaveCancelledError } from '../storage/saveLocation';
 import { formatBytes } from '../utils/format';
 import { ProgressBar } from './ProgressBar';
 import { SegmentBars } from './SegmentBars';
@@ -41,6 +41,7 @@ export function DownloadPanel({
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [saveError, setSaveError] = useState('');
   const [savedTo, setSavedTo] = useState('');
+  const [savedUri, setSavedUri] = useState('');
 
   const { jobId, title, container, job, progress } = item;
   const displayStatus = displayStatusOf(item);
@@ -69,8 +70,8 @@ export function DownloadPanel({
       const cachedUri = `${FileSystem.cacheDirectory}${baseName}.${ext}`;
       const { uri } = await FileSystem.downloadAsync(fileUrl, cachedUri);
 
-      await placeFileInFolder(uri, folder, baseName, ext);
-      setSavedTo(folder.uri.includes('/tree/') ? folderLabel(folder.uri) : 'Gil Tube folder in Files');
+      setSavedUri(await placeFileInFolder(uri, folder, baseName, ext));
+      setSavedTo(folder.uri.includes('/tree/') ? folderLabel(folder.uri) : `${DEFAULT_FOLDER_NAME} folder in Files`);
       setSaveState('saved');
     } catch (err) {
       if (err instanceof SaveCancelledError) {
@@ -82,15 +83,12 @@ export function DownloadPanel({
     }
   };
 
-  const onShare = async () => {
+  const onOpen = async () => {
+    setSaveError('');
     try {
-      const fileUrl = await getJobFileUrl(jobId);
-      const ext = container || 'bin';
-      const baseName = (title || jobId).replace(/[\/:*?"<>|]/g, '_');
-      const { uri } = await FileSystem.downloadAsync(fileUrl, `${FileSystem.cacheDirectory}${baseName}.${ext}`);
-      if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(uri);
+      await openSavedFile(savedUri, container || 'bin');
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : 'Could not share the file.');
+      setSaveError(err instanceof Error ? err.message : 'No app found to open this file.');
     }
   };
 
@@ -166,9 +164,11 @@ export function DownloadPanel({
               <Text style={[styles.savedText, { color: colors.success }]} numberOfLines={2}>
                 Saved to {savedTo}
               </Text>
-              <Pressable onPress={onShare} hitSlop={8}>
-                <Text style={{ color: colors.primary, fontWeight: '600', fontSize: 13 }}>Share</Text>
-              </Pressable>
+              {savedUri ? (
+                <Pressable onPress={onOpen} hitSlop={8}>
+                  <Text style={{ color: colors.primary, fontWeight: '600', fontSize: 13 }}>Open</Text>
+                </Pressable>
+              ) : null}
             </View>
           ) : null}
         </>
