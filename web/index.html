@@ -953,7 +953,7 @@
       // recreating an iframe every time.
       let ytPlayer = null;
       let ytApiReady = false;
-      // `new YT.Player()` returns immediately, but its methods (cueVideoById
+      // `new YT.Player()` returns immediately, but its methods (loadVideoById
       // etc.) only exist once the player fires onReady. Until then a newly
       // requested video is parked in pendingVideoId (latest click wins) and
       // cued from onReady, rather than calling a method that isn't there yet.
@@ -1011,18 +1011,21 @@
         if (!ytPlayer) {
           ytPlayer = new YT.Player('previewIframe', {
             videoId,
-            playerVars: { rel: 0, modestbranding: 1 },
+            // autoplay: opening a video is always a click, so the browser
+            // allows it to start playing right away (like the mobile sheet).
+            playerVars: { rel: 0, modestbranding: 1, autoplay: 1, playsinline: 1 },
             events: {
               onReady: () => {
                 ytPlayerReady = true;
                 const queued = pendingVideoId;
                 pendingVideoId = null;
-                if (queued) ytPlayer.cueVideoById(queued);
+                if (queued) ytPlayer.loadVideoById(queued);
                 else hideLoadingCover();
               },
-              // 5 = cued, 1 = playing: the new video is actually showing.
+              // 3 = buffering, 1 = playing, 5 = cued (autoplay refused): the
+              // video is showing, so the cover can go.
               onStateChange: (event) => {
-                if (event.data === 5 || event.data === 1) hideLoadingCover();
+                if (event.data === 3 || event.data === 1 || event.data === 5) hideLoadingCover();
               },
               onError: hideLoadingCover,
             },
@@ -1034,7 +1037,8 @@
           pendingVideoId = videoId;
           return;
         }
-        ytPlayer.cueVideoById(videoId);
+        // loadVideoById (not cueVideoById) so the video starts playing.
+        ytPlayer.loadVideoById(videoId);
       }
 
       function showError(message) {
