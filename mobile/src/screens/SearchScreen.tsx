@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { ApiNotConfiguredError, cachedSearches, search, searchSuggestions } from '../api/client';
 import { SearchResult } from '../api/types';
+import { PreviewSheet } from '../components/PreviewSheet';
 import { ResultCard } from '../components/ResultCard';
 import { SkeletonGrid } from '../components/SkeletonGrid';
 import { useTheme } from '../theme/theme';
@@ -28,6 +29,7 @@ export function SearchScreen({ navigation }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [heading, setHeading] = useState('');
+  const [selected, setSelected] = useState<SearchResult | null>(null);
 
   // Cached-videos view is a paged feed (infinite scroll); a live search
   // returns one fixed batch from yt-dlp per query, so there's nothing to
@@ -216,7 +218,7 @@ export function SearchScreen({ navigation }: Props) {
             <ResultCard
               result={item}
               colors={colors}
-              onPress={() => navigation.navigate('Preview', { result: item })}
+              onPress={() => setSelected(item)}
             />
           )}
           onEndReachedThreshold={0.4}
@@ -231,6 +233,15 @@ export function SearchScreen({ navigation }: Props) {
           }
         />
       )}
+
+      <PreviewSheet
+        result={selected}
+        onClose={() => setSelected(null)}
+        onDownloadStarted={(job, title) => {
+          setSelected(null);
+          navigation.navigate('Download', { jobId: job.job_id, title, container: job.container });
+        }}
+      />
     </View>
   );
 }
