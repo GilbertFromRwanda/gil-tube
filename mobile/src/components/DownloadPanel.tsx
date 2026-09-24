@@ -1,4 +1,3 @@
-import { NativeStackScreenProps } from '@react-navigation/native-stack';
 // SDK 57's default expo-file-system export is the new File/Directory API;
 // `downloadAsync`/`cacheDirectory` still live under the /legacy subpath.
 import * as FileSystem from 'expo-file-system/legacy';
@@ -7,13 +6,10 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { cancelJob, getJob, getJobFileUrl, getJobProgress } from '../api/client';
 import { Job, JobProgress, JobStatus } from '../api/types';
-import { ProgressBar } from '../components/ProgressBar';
-import { SegmentBars } from '../components/SegmentBars';
 import { useTheme } from '../theme/theme';
 import { formatBytes } from '../utils/format';
-import { RootStackParamList } from '../navigation';
-
-type Props = NativeStackScreenProps<RootStackParamList, 'Download'>;
+import { ProgressBar } from './ProgressBar';
+import { SegmentBars } from './SegmentBars';
 
 function statusColor(status: JobStatus, colors: ReturnType<typeof useTheme>['colors']) {
   if (status === 'COMPLETED') return colors.success;
@@ -22,9 +18,23 @@ function statusColor(status: JobStatus, colors: ReturnType<typeof useTheme>['col
   return colors.primary;
 }
 
-export function DownloadScreen({ route }: Props) {
+// Live progress for one download job: polls status + progress once a second
+// (like the web UI), shows IDM-style segment bars and the merge phase, and
+// offers cancel while running / save-share once it completes. Reports
+// whether the job is still running so the host can disable its Download
+// button meanwhile.
+export function DownloadPanel({
+  jobId,
+  title,
+  container,
+  onActiveChange,
+}: {
+  jobId: string;
+  title: string;
+  container?: string;
+  onActiveChange?: (active: boolean) => void;
+}) {
   const { colors } = useTheme();
-  const { jobId, title, container } = route.params;
 
   const [job, setJob] = useState<Job | null>(null);
   const [progress, setProgress] = useState<JobProgress | null>(null);
@@ -55,6 +65,15 @@ export function DownloadScreen({ route }: Props) {
       if (pollRef.current) clearInterval(pollRef.current);
     };
   }, [poll]);
+
+  const displayStatus: JobStatus =
+    job?.status === 'DOWNLOADING' && progress?.status ? progress.status : job?.status || 'QUEUED';
+  const isTerminal = ['COMPLETED', 'FAILED', 'CANCELLED'].includes(displayStatus);
+  const isMuxing = displayStatus === 'MUXING';
+
+  useEffect(() => {
+    onActiveChange?.(!isTerminal);
+  }, [isTerminal, onActiveChange]);
 
   const onCancel = async () => {
     setCancelling(true);
@@ -87,37 +106,31 @@ export function DownloadScreen({ route }: Props) {
     }
   };
 
-  const displayStatus: JobStatus =
-    job?.status === 'DOWNLOADING' && progress?.status ? progress.status : job?.status || 'QUEUED';
-  const isTerminal = ['COMPLETED', 'FAILED', 'CANCELLED'].includes(displayStatus);
-  const isMuxing = displayStatus === 'MUXING';
-
   const downloaded = progress?.bytes_downloaded || 0;
   const total = progress?.bytes_total ?? null;
   const percent = isMuxing
     ? progress?.mux_progress_percent || 0
-    : total
-      ? (downloaded / total) * 100
-      : 0;
+    : displayStatus === 'COMPLETED'
+      ? 100
+      : total
+        ? (downloaded / total) * 100
+        : 0;
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.bg }]}>
-      <Text style={[styles.title, { color: colors.text }]} numberOfLines={2}>
-        {title || jobId}
-      </Text>
-
+    <View style={[styles.card, { backgroundColor: colors.panel, borderColor: colors.border }]}>
       <View style={styles.statusRow}>
         <View style={[styles.statusPill, { backgroundColor: statusColor(displayStatus, colors) }]}>
           <Text style={styles.statusText}>{displayStatus}</Text>
         </View>
+        {!isTerminal ? (
+          <Pressable disabled={cancelling} onPress={onCancel} style={{ opacity: cancelling ? 0.6 : 1 }}>
+            <Text style={{ color: colors.danger, fontWeight: '600', fontSize: 13 }}>Cancel</Text>
+          </Pressable>
+        ) : null}
       </View>
 
       <View style={styles.progressBlock}>
-        <ProgressBar
-          percent={percent}
-          colors={colors}
-          indeterminate={!isMuxing && !total && !isTerminal}
-        />
+        <ProgressBar percent={percent} colors={colors} indeterminate={!isMuxing && !total && !isTerminal} />
         <View style={styles.progressMetaRow}>
           <Text style={[styles.progressMeta, { color: colors.muted }]}>
             {isMuxing
@@ -129,31 +142,21 @@ export function DownloadScreen({ route }: Props) {
           <Text style={[styles.progressMeta, { color: colors.muted }]}>
             {isMuxing
               ? `${Math.round(percent)}%`
-              : progress?.speed_bytes_per_second
+              : progress?.speed_bytes_per_second && !isTerminal
                 ? `${formatBytes(progress.speed_bytes_per_second)}/s`
                 : ''}
           </Text>
         </View>
-        {!isMuxing && progress?.segments ? (
+        {!isMuxing && !isTerminal && progress?.segments ? (
           <SegmentBars segments={progress.segments} bytesTotal={total} colors={colors} />
         ) : null}
       </View>
-
-      {!isTerminal ? (
-        <Pressable
-          disabled={cancelling}
-          onPress={onCancel}
-          style={[styles.cancelButton, { borderColor: colors.danger, opacity: cancelling ? 0.6 : 1 }]}
-        >
-          <Text style={{ color: colors.danger, fontWeight: '600' }}>Cancel</Text>
-        </Pressable>
-      ) : null}
 
       {displayStatus === 'COMPLETED' ? (
         <Pressable
           disabled={saveState === 'saving'}
           onPress={onSave}
-          style={[styles.saveButton, { backgroundColor: colors.primary, opacity: saveState === 'saving' ? 0.7 : 1 }]}
+          style={[styles.saveButton, { backgroundColor: colors.success, opacity: saveState === 'saving' ? 0.7 : 1 }]}
         >
           <Text style={styles.saveButtonText}>
             {saveState === 'saving' ? 'Preparing file…' : saveState === 'saved' ? 'Saved — share again' : 'Save file'}
@@ -162,9 +165,7 @@ export function DownloadScreen({ route }: Props) {
       ) : null}
 
       {displayStatus === 'FAILED' || displayStatus === 'CANCELLED' ? (
-        <Text style={[styles.errorText, { color: colors.danger }]}>
-          {job?.error_message || displayStatus}
-        </Text>
+        <Text style={[styles.errorText, { color: colors.danger }]}>{job?.error_message || displayStatus}</Text>
       ) : null}
 
       {saveError ? <Text style={[styles.errorText, { color: colors.danger }]}>{saveError}</Text> : null}
@@ -173,22 +174,14 @@ export function DownloadScreen({ route }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 16, paddingTop: 54 },
-  title: { fontSize: 16, fontWeight: '700' },
-  statusRow: { marginTop: 12 },
-  statusPill: { alignSelf: 'flex-start', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
+  card: { marginTop: 16, padding: 14, borderRadius: 12, borderWidth: 1 },
+  statusRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  statusPill: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
   statusText: { color: '#04121f', fontWeight: '700', fontSize: 11 },
-  progressBlock: { marginTop: 18 },
+  progressBlock: { marginTop: 12 },
   progressMetaRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 },
   progressMeta: { fontSize: 12 },
-  cancelButton: {
-    marginTop: 24,
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  saveButton: { marginTop: 24, borderRadius: 10, paddingVertical: 13, alignItems: 'center' },
+  saveButton: { marginTop: 14, borderRadius: 10, paddingVertical: 12, alignItems: 'center' },
   saveButtonText: { color: '#04121f', fontWeight: '700', fontSize: 15 },
-  errorText: { marginTop: 14 },
+  errorText: { marginTop: 12, fontSize: 13 },
 });
