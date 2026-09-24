@@ -3,6 +3,7 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { getApiBaseUrl, setApiBaseUrl } from '../api/client';
+import { canChooseFolder, chooseSaveFolder, forgetSaveFolder, getSaveFolderLabel, SaveCancelledError } from '../storage/saveLocation';
 import { useTheme } from '../theme/theme';
 import { RootStackParamList } from '../navigation';
 
@@ -12,14 +13,34 @@ export function SettingsScreen({ navigation }: Props) {
   const { colors } = useTheme();
   const [value, setValue] = useState('');
   const [saved, setSaved] = useState(false);
+  const [folder, setFolder] = useState<string | null>(null);
+  const [folderError, setFolderError] = useState('');
 
   // Reload from storage whenever this screen gains focus, so returning from
   // a successful QR scan (which writes straight to storage) shows up here.
   useFocusEffect(
     useCallback(() => {
       getApiBaseUrl().then((stored) => setValue(stored || ''));
+      getSaveFolderLabel().then(setFolder);
     }, []),
   );
+
+  const onChooseFolder = async () => {
+    setFolderError('');
+    try {
+      await chooseSaveFolder();
+      setFolder(await getSaveFolderLabel());
+    } catch (err) {
+      if (!(err instanceof SaveCancelledError)) {
+        setFolderError(err instanceof Error ? err.message : 'Could not use that folder.');
+      }
+    }
+  };
+
+  const onResetFolder = async () => {
+    await forgetSaveFolder();
+    setFolder(await getSaveFolderLabel());
+  };
 
   const onSave = async () => {
     await setApiBaseUrl(value);
@@ -57,6 +78,31 @@ export function SettingsScreen({ navigation }: Props) {
       <Pressable onPress={onSave} style={[styles.saveButton, { backgroundColor: colors.primary }]}>
         <Text style={styles.saveButtonText}>{saved ? 'Saved' : 'Save'}</Text>
       </Pressable>
+
+      <Text style={[styles.label, styles.sectionGap, { color: colors.text }]}>Save location</Text>
+      <Text style={[styles.hint, { color: colors.muted }]}>
+        {canChooseFolder
+          ? 'Downloaded videos are saved to your Downloads folder. You choose the folder once and it is remembered.'
+          : 'Downloaded videos are saved automatically in the Gil Tube folder in the Files app.'}
+      </Text>
+      <View style={[styles.folderBox, { backgroundColor: colors.panelAlt, borderColor: colors.border }]}>
+        <Text style={{ color: folder ? colors.text : colors.muted }} numberOfLines={2}>
+          {folder ?? 'Not chosen yet - you will be asked when you save your first video'}
+        </Text>
+      </View>
+      {canChooseFolder ? (
+        <View style={styles.folderActions}>
+          <Pressable onPress={onChooseFolder}>
+            <Text style={{ color: colors.primary, fontWeight: '600' }}>{folder ? 'Change folder' : 'Choose folder'}</Text>
+          </Pressable>
+          {folder ? (
+            <Pressable onPress={onResetFolder}>
+              <Text style={{ color: colors.muted, fontWeight: '600' }}>Forget</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
+      {folderError ? <Text style={[styles.hint, { color: colors.danger }]}>{folderError}</Text> : null}
     </View>
   );
 }
@@ -76,4 +122,7 @@ const styles = StyleSheet.create({
   input: { marginTop: 10, borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, height: 42 },
   saveButton: { marginTop: 16, borderRadius: 10, paddingVertical: 12, alignItems: 'center' },
   saveButtonText: { color: '#04121f', fontWeight: '700' },
+  sectionGap: { marginTop: 32 },
+  folderBox: { marginTop: 12, borderWidth: 1, borderRadius: 10, padding: 12 },
+  folderActions: { flexDirection: 'row', gap: 20, marginTop: 12 },
 });
