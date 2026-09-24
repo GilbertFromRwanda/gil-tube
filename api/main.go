@@ -496,8 +496,8 @@ func callExtractor(extractorBaseURL string, httpClient *http.Client, url string)
 // callExtractorSearch proxies a search query to the extractor and returns
 // its raw status/body, since the API doesn't need to inspect the result
 // shape itself (it's passed straight through to the browser).
-func callExtractorSearch(extractorBaseURL string, httpClient *http.Client, query string, limit int) (int, []byte, error) {
-	reqBody, err := json.Marshal(map[string]any{"query": query, "limit": limit})
+func callExtractorSearch(extractorBaseURL string, httpClient *http.Client, query string, limit int, refresh bool) (int, []byte, error) {
+	reqBody, err := json.Marshal(map[string]any{"query": query, "limit": limit, "refresh": refresh})
 	if err != nil {
 		return 0, nil, err
 	}
@@ -662,8 +662,9 @@ func setupRouterWithDeps(extractorBaseURL, downloaderBaseURL string, httpClient 
 
 	r.POST("/api/v1/search", func(c *gin.Context) {
 		var payload struct {
-			Query string `json:"query"`
-			Limit int    `json:"limit"`
+			Query   string `json:"query"`
+			Limit   int    `json:"limit"`
+			Refresh bool   `json:"refresh"`
 		}
 
 		if err := c.ShouldBindJSON(&payload); err != nil || strings.TrimSpace(payload.Query) == "" {
@@ -674,7 +675,7 @@ func setupRouterWithDeps(extractorBaseURL, downloaderBaseURL string, httpClient 
 			payload.Limit = 12
 		}
 
-		status, body, err := callExtractorSearch(extractorBaseURL, httpClient, payload.Query, payload.Limit)
+		status, body, err := callExtractorSearch(extractorBaseURL, httpClient, payload.Query, payload.Limit, payload.Refresh)
 		if err != nil {
 			c.JSON(http.StatusBadGateway, apiError("SEARCH_FAILED", "extractor unavailable"))
 			return

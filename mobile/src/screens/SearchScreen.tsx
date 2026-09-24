@@ -4,6 +4,7 @@ import {
   ActivityIndicator,
   FlatList,
   Pressable,
+  RefreshControl,
   StyleSheet,
   Text,
   TextInput,
@@ -31,6 +32,10 @@ export function SearchScreen({ navigation }: Props) {
   const [error, setError] = useState('');
   const [heading, setHeading] = useState('');
   const [selected, setSelected] = useState<SearchResult | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  // What the list currently shows: a live search's query, or null for the
+  // cached-videos feed. Pull-to-refresh reloads whichever this is.
+  const [activeQuery, setActiveQuery] = useState<string | null>(null);
 
   // Cached-videos view is a paged feed (infinite scroll); a live search
   // returns one fixed batch from yt-dlp per query, so there's nothing to
@@ -84,6 +89,7 @@ export function SearchScreen({ navigation }: Props) {
         const data = await cachedSearches(0, PAGE_SIZE);
         if (data.videos.length > 0) {
           setHeading('Cached videos');
+          setActiveQuery(null);
           setResults(data.videos);
           setCachedOffset(data.videos.length);
           setCachedHasMore(data.has_more);
@@ -95,6 +101,7 @@ export function SearchScreen({ navigation }: Props) {
 
       try {
         setQuery(DEFAULT_QUERY);
+        setActiveQuery(DEFAULT_QUERY);
         const data = await search(DEFAULT_QUERY, 12);
         setHeading(`Results for "${DEFAULT_QUERY}"`);
         setResults(data.results);
@@ -134,6 +141,7 @@ export function SearchScreen({ navigation }: Props) {
     setCachedHasMore(false);
     try {
       const data = await search(text.trim(), 12);
+      setActiveQuery(text.trim());
       setHeading(`Results for "${text.trim()}"`);
       setResults(data.results);
     } catch (err) {
@@ -142,6 +150,35 @@ export function SearchScreen({ navigation }: Props) {
       setLoading(false);
     }
   }, []);
+
+  // Pull-to-refresh keeps the list mounted (so the native pull spinner
+  // shows) instead of swapping to the skeleton, and re-fetches whatever the
+  // list is showing: a live search bypasses the server's cached copy; the
+  // cached feed reloads from the top to pick up newly cached videos.
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    setError('');
+    try {
+      if (activeQuery) {
+        const data = await search(activeQuery, 12, true);
+        setResults(data.results);
+        setCachedHasMore(false);
+      } else {
+        const data = await cachedSearches(0, PAGE_SIZE);
+        if (data.videos.length > 0) {
+          setResults(data.videos);
+          setCachedOffset(data.videos.length);
+          setCachedHasMore(data.has_more);
+        } else {
+          await loadInitial();
+        }
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not refresh.');
+    } finally {
+      setRefreshing(false);
+    }
+  }, [activeQuery, loadInitial]);
 
   const loadMoreCached = useCallback(async () => {
     if (!cachedHasMore || loadingMore) return;
@@ -234,7 +271,16 @@ export function SearchScreen({ navigation }: Props) {
           data={results}
           keyExtractor={(item, index) => `${item.id || item.url}-${index}`}
           numColumns={2}
-          contentContainerStyle={styles.list}
+          contentContainerStyle={[styles.list, results.length === 0 && styles.listEmpty]}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={colors.primary}
+              colors={[colors.primary]}
+              progressBackgroundColor={colors.panel}
+            />
+          }
           renderItem={({ item }) => (
             <ResultCard
               result={item}
@@ -290,5 +336,7 @@ const styles = StyleSheet.create({
   error: { marginHorizontal: 12, marginTop: 10 },
   heading: { marginHorizontal: 12, marginTop: 12, marginBottom: 2, fontSize: 12, fontWeight: '600' },
   list: { paddingHorizontal: 6, paddingBottom: 24 },
+  // Lets an empty/errored list still be pulled to retry.
+  listEmpty: { flexGrow: 1 },
   empty: { textAlign: 'center', marginTop: 32 },
 });

@@ -300,3 +300,22 @@ def test_cached_searches_drops_channel_entries_cached_earlier():
     )
     videos = main.app.test_client().get('/api/v1/cached-searches').get_json()['videos']
     assert [v['id'] for v in videos] == ['R51PMRjyS9w']
+
+
+def test_search_refresh_bypasses_cache_and_updates_it():
+    main.cache = main.build_cache_from_env()
+    first = {'entries': [{'id': 'old00000001', 'ie_key': 'Youtube', 'title': 'old'}]}
+    second = {'entries': [{'id': 'new00000001', 'ie_key': 'Youtube', 'title': 'new'}]}
+    client = main.app.test_client()
+    with patch.object(main, 'run_search', return_value=first) as run:
+        client.post('/api/v1/search', json={'query': 'q'})
+        # Plain repeat is served from cache: no second extraction.
+        assert client.post('/api/v1/search', json={'query': 'q'}).get_json()['results'][0]['id'] == 'old00000001'
+        assert run.call_count == 1
+    with patch.object(main, 'run_search', return_value=second) as run:
+        refreshed = client.post('/api/v1/search', json={'query': 'q', 'refresh': True}).get_json()
+        assert refreshed['results'][0]['id'] == 'new00000001'
+        assert run.call_count == 1
+        # The fresh result replaced the cached one for later plain searches.
+        assert client.post('/api/v1/search', json={'query': 'q'}).get_json()['results'][0]['id'] == 'new00000001'
+        assert run.call_count == 1
