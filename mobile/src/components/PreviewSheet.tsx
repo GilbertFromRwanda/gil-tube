@@ -17,7 +17,8 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import YoutubePlayer from 'react-native-youtube-iframe';
 import { createJob, preview } from '../api/client';
-import { Job, PreviewInfo, SearchResult } from '../api/types';
+import { PreviewInfo, SearchResult } from '../api/types';
+import { isActive, useDownloads } from '../downloads/DownloadsContext';
 import { useTheme } from '../theme/theme';
 import { formatDuration, formatLabel } from '../utils/format';
 import { DownloadPanel } from './DownloadPanel';
@@ -50,8 +51,8 @@ export function PreviewSheet({
   const [selectedFormat, setSelectedFormat] = useState('');
   const [starting, setStarting] = useState(false);
   const [playing, setPlaying] = useState(true);
-  const [job, setJob] = useState<Job | null>(null);
-  const [jobActive, setJobActive] = useState(false);
+  const { items, track } = useDownloads();
+  const [jobId, setJobId] = useState<string | null>(null);
   const scrollRef = useRef<ScrollView>(null);
 
   const url = result?.url || '';
@@ -65,8 +66,7 @@ export function PreviewSheet({
     setSelectedFormat('');
     setStarting(false);
     setPlaying(true);
-    setJob(null);
-    setJobActive(false);
+    setJobId(null);
 
     translateY.setValue(windowHeight);
     Animated.timing(translateY, {
@@ -144,6 +144,9 @@ export function PreviewSheet({
     .filter((f) => f.id && (f.height || f.container))
     .sort((a, b) => (b.height || 0) - (a.height || 0));
 
+  const jobItem = jobId ? items.find((item) => item.jobId === jobId) : undefined;
+  const jobActive = jobItem ? isActive(jobItem) : false;
+
   const sheetWidth = windowWidth;
   const playerWidth = sheetWidth - 32;
   const playerHeight = playerWidth * (9 / 16);
@@ -152,7 +155,9 @@ export function PreviewSheet({
     setStarting(true);
     setError('');
     try {
-      setJob(await createJob(url, selectedFormat || undefined));
+      const created = await createJob(url, selectedFormat || undefined);
+      track(created, title);
+      setJobId(created.job_id);
       // Progress renders below the button; bring it into view once laid out.
       setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 150);
     } catch (err) {
@@ -253,19 +258,11 @@ export function PreviewSheet({
                   ]}
                 >
                   <Text style={styles.downloadButtonText}>
-                    {starting ? 'Starting…' : jobActive ? 'Downloading…' : job ? 'Download again' : 'Download'}
+                    {starting ? 'Starting…' : jobActive ? 'Downloading…' : jobItem ? 'Download again' : 'Download'}
                   </Text>
                 </Pressable>
 
-                {job ? (
-                  <DownloadPanel
-                    key={job.job_id}
-                    jobId={job.job_id}
-                    title={title}
-                    container={job.container}
-                    onActiveChange={setJobActive}
-                  />
-                ) : null}
+                {jobItem ? <DownloadPanel key={jobItem.jobId} item={jobItem} /> : null}
               </>
             ) : null}
           </ScrollView>

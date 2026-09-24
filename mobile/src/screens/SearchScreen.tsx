@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { ApiNotConfiguredError, cachedSearches, search, searchSuggestions } from '../api/client';
 import { SearchResult } from '../api/types';
+import { DownloadsTray } from '../components/DownloadsTray';
 import { PreviewSheet } from '../components/PreviewSheet';
 import { ResultCard } from '../components/ResultCard';
 import { SkeletonGrid } from '../components/SkeletonGrid';
@@ -199,6 +200,8 @@ export function SearchScreen({ navigation }: Props) {
           ))}
         </View>
       ) : null}
+
+      <DownloadsTray />
 
       {error ? (
         <Text style={[styles.error, { color: colors.danger }]}>{error}</Text>

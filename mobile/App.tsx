@@ -3,6 +3,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { StatusBar } from 'expo-status-bar';
 import React from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { DownloadsProvider } from './src/downloads/DownloadsContext';
 import { RootStackParamList } from './src/navigation';
 import { ScanQrScreen } from './src/screens/ScanQrScreen';
 import { SearchScreen } from './src/screens/SearchScreen';
@@ -40,7 +41,9 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <ThemeProvider>
-        <Navigator />
+        <DownloadsProvider>
+          <Navigator />
+        </DownloadsProvider>
       </ThemeProvider>
     </SafeAreaProvider>
   );
