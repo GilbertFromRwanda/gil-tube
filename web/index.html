@@ -1089,13 +1089,42 @@
         });
       }
 
+      // Asks the server (which scans the queries stored in Redis) for stored
+      // searches starting with what's typed so far, rather than filtering a
+      // small client-side snapshot. Debounced, and a sequence number drops
+      // responses that arrive after a newer keystroke already superseded them.
+      let suggestionTimer = null;
+      let suggestionSeq = 0;
+
+      async function fetchSuggestions(prefix) {
+        const seq = ++suggestionSeq;
+        try {
+          const response = await fetch(
+            `${API_BASE}/api/v1/search-suggestions?q=${encodeURIComponent(prefix)}`
+          );
+          if (!response.ok) throw new Error('bad status');
+          const data = await response.json();
+          if (seq !== suggestionSeq) return;
+          renderSearchSuggestions(data.suggestions || []);
+        } catch (err) {
+          if (seq !== suggestionSeq) return;
+          const lowered = prefix.toLowerCase();
+          renderSearchSuggestions(
+            cachedQueries.filter((q) => q.toLowerCase().startsWith(lowered)).slice(0, 8)
+          );
+        }
+      }
+
       function wireSearchSuggestions() {
         searchInput.addEventListener('input', () => {
-          const value = searchInput.value.trim().toLowerCase();
-          const matches = value
-            ? cachedQueries.filter((q) => q.toLowerCase().includes(value))
-            : cachedQueries;
-          renderSearchSuggestions(matches.slice(0, 8));
+          const value = searchInput.value.trim();
+          if (suggestionTimer) clearTimeout(suggestionTimer);
+          if (!value) {
+            suggestionSeq += 1;
+            renderSearchSuggestions(cachedQueries.slice(0, 8));
+            return;
+          }
+          suggestionTimer = setTimeout(() => fetchSuggestions(value), 120);
         });
         searchInput.addEventListener('focus', () => {
           if (!searchInput.value.trim()) renderSearchSuggestions(cachedQueries.slice(0, 8));

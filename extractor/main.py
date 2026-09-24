@@ -28,6 +28,7 @@ MAX_SEARCH_QUERY_LENGTH = 200
 MAX_CACHED_VIDEOS = 50
 CACHED_VIDEOS_SCAN_CEILING = 500
 MAX_CACHED_QUERIES = 20
+MAX_SUGGESTIONS = 8
 
 logger = logging.getLogger("extractor")
 logging.basicConfig(level=logging.INFO)
@@ -265,6 +266,31 @@ def search():
     cache.set(key, result, SEARCH_CACHE_TTL_SECONDS)
     log_event("search_completed", query=query, duration_ms=duration_ms, result_count=len(results))
     return jsonify(result)
+
+
+@app.get("/api/v1/search-suggestions")
+def search_suggestions():
+    prefix = (request.args.get("q") or "").strip().lower()
+    try:
+        limit = int(request.args.get("limit", MAX_SUGGESTIONS))
+    except (TypeError, ValueError):
+        limit = MAX_SUGGESTIONS
+    limit = max(1, min(limit, MAX_SUGGESTIONS))
+
+    # Cache keys are SHA-256 hashes, so the original query text only exists
+    # inside the stored value - prefix matching has to read values, not keys.
+    suggestions = []
+    seen = set()
+    for entry in cache.scan_values("search:"):
+        query_text = ((entry or {}).get("query") or "").strip()
+        lowered = query_text.lower()
+        if not query_text or lowered in seen or not lowered.startswith(prefix):
+            continue
+        seen.add(lowered)
+        suggestions.append(query_text)
+
+    suggestions.sort(key=str.lower)
+    return jsonify({"prefix": prefix, "suggestions": suggestions[:limit]})
 
 
 @app.get("/api/v1/cached-searches")

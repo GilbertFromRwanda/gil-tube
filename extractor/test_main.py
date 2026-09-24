@@ -233,3 +233,40 @@ def test_cached_searches_includes_distinct_query_suggestions():
         queries = response.get_json()['queries']
         assert len(queries) == 2
         assert {q.lower() for q in queries} == {'lofi beats', 'chill beats'}
+
+
+def test_search_suggestions_match_only_by_prefix_case_insensitively():
+    main.cache = main.build_cache_from_env()
+    with patch.object(main, 'run_search', return_value=FAKE_SEARCH_INFO):
+        client = main.app.test_client()
+        client.post('/api/v1/search', json={'query': 'rekeba music'})
+        client.post('/api/v1/search', json={'query': 'Rekeba worship'})
+        client.post('/api/v1/search', json={'query': 'lofi beats'})
+        # Contains "rek" but doesn't start with it - must not match.
+        client.post('/api/v1/search', json={'query': 'best of rek'})
+
+        response = client.get('/api/v1/search-suggestions?q=REK')
+        assert response.status_code == 200
+        assert response.get_json()['suggestions'] == ['rekeba music', 'Rekeba worship']
+
+
+def test_search_suggestions_dedupe_same_query_cached_under_different_limits():
+    main.cache = main.build_cache_from_env()
+    with patch.object(main, 'run_search', return_value=FAKE_SEARCH_INFO):
+        client = main.app.test_client()
+        client.post('/api/v1/search', json={'query': 'lofi beats', 'limit': 12})
+        client.post('/api/v1/search', json={'query': 'lofi beats', 'limit': 5})
+
+        suggestions = client.get('/api/v1/search-suggestions?q=lo').get_json()['suggestions']
+        assert suggestions == ['lofi beats']
+
+
+def test_search_suggestions_empty_prefix_returns_recent_queries_and_respects_limit():
+    main.cache = main.build_cache_from_env()
+    with patch.object(main, 'run_search', return_value=FAKE_SEARCH_INFO):
+        client = main.app.test_client()
+        client.post('/api/v1/search', json={'query': 'aaa'})
+        client.post('/api/v1/search', json={'query': 'bbb'})
+
+        assert len(client.get('/api/v1/search-suggestions').get_json()['suggestions']) == 2
+        assert len(client.get('/api/v1/search-suggestions?limit=1').get_json()['suggestions']) == 1

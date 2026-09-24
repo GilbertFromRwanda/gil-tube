@@ -83,6 +83,10 @@ export function search(query: string, limit = 12): Promise<SearchResponse> {
   });
 }
 
+export function searchSuggestions(prefix: string): Promise<{ suggestions: string[] }> {
+  return request(`/api/v1/search-suggestions?q=${encodeURIComponent(prefix)}`);
+}
+
 export function cachedSearches(offset: number, limit: number): Promise<CachedSearchesResponse> {
   return request(`/api/v1/cached-searches?offset=${offset}&limit=${limit}`);
 }
