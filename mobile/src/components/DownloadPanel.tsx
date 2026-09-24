@@ -8,6 +8,7 @@ import { getJobFileUrl } from '../api/client';
 import { JobStatus } from '../api/types';
 import { DownloadItem, displayStatusOf, isActive, useDownloads } from '../downloads/DownloadsContext';
 import { useTheme } from '../theme/theme';
+import { folderLabel, placeFileInFolder, resolveSaveFolder, SaveCancelledError } from '../storage/saveLocation';
 import { formatBytes } from '../utils/format';
 import { ProgressBar } from './ProgressBar';
 import { SegmentBars } from './SegmentBars';
@@ -39,6 +40,7 @@ export function DownloadPanel({
   const [cancelling, setCancelling] = useState(false);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [saveError, setSaveError] = useState('');
+  const [savedTo, setSavedTo] = useState('');
 
   const { jobId, title, container, job, progress } = item;
   const displayStatus = displayStatusOf(item);
@@ -51,23 +53,44 @@ export function DownloadPanel({
     setCancelling(false);
   };
 
+  // Saves into the remembered folder without asking. Only the very first
+  // save on Android (or after the folder was deleted / access revoked) shows
+  // the system folder picker - and it does so *before* the download starts,
+  // so the wait isn't wasted if the user cancels.
   const onSave = async () => {
     setSaveState('saving');
     setSaveError('');
     try {
+      const folder = await resolveSaveFolder();
+
       const fileUrl = await getJobFileUrl(jobId);
       const ext = container || 'bin';
-      const safeName = (title || jobId).replace(/[\\/:*?"<>|]/g, '_');
-      const localUri = `${FileSystem.cacheDirectory}${safeName}.${ext}`;
-      const { uri } = await FileSystem.downloadAsync(fileUrl, localUri);
+      const baseName = (title || jobId).replace(/[\/:*?"<>|]/g, '_');
+      const cachedUri = `${FileSystem.cacheDirectory}${baseName}.${ext}`;
+      const { uri } = await FileSystem.downloadAsync(fileUrl, cachedUri);
 
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(uri);
-      }
+      await placeFileInFolder(uri, folder, baseName, ext);
+      setSavedTo(folder.uri.includes('/tree/') ? folderLabel(folder.uri) : 'Gil Tube folder in Files');
       setSaveState('saved');
     } catch (err) {
+      if (err instanceof SaveCancelledError) {
+        setSaveState('idle');
+        return;
+      }
       setSaveState('error');
       setSaveError(err instanceof Error ? err.message : 'Could not save the file.');
+    }
+  };
+
+  const onShare = async () => {
+    try {
+      const fileUrl = await getJobFileUrl(jobId);
+      const ext = container || 'bin';
+      const baseName = (title || jobId).replace(/[\/:*?"<>|]/g, '_');
+      const { uri } = await FileSystem.downloadAsync(fileUrl, `${FileSystem.cacheDirectory}${baseName}.${ext}`);
+      if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(uri);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Could not share the file.');
     }
   };
 
@@ -128,15 +151,27 @@ export function DownloadPanel({
       </View>
 
       {displayStatus === 'COMPLETED' ? (
-        <Pressable
-          disabled={saveState === 'saving'}
-          onPress={onSave}
-          style={[styles.saveButton, { backgroundColor: colors.success, opacity: saveState === 'saving' ? 0.7 : 1 }]}
-        >
-          <Text style={styles.saveButtonText}>
-            {saveState === 'saving' ? 'Preparing file…' : saveState === 'saved' ? 'Saved — share again' : 'Save file'}
-          </Text>
-        </Pressable>
+        <>
+          <Pressable
+            disabled={saveState === 'saving'}
+            onPress={onSave}
+            style={[styles.saveButton, { backgroundColor: colors.success, opacity: saveState === 'saving' ? 0.7 : 1 }]}
+          >
+            <Text style={styles.saveButtonText}>
+              {saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? 'Save again' : 'Save file'}
+            </Text>
+          </Pressable>
+          {saveState === 'saved' ? (
+            <View style={styles.savedRow}>
+              <Text style={[styles.savedText, { color: colors.success }]} numberOfLines={2}>
+                Saved to {savedTo}
+              </Text>
+              <Pressable onPress={onShare} hitSlop={8}>
+                <Text style={{ color: colors.primary, fontWeight: '600', fontSize: 13 }}>Share</Text>
+              </Pressable>
+            </View>
+          ) : null}
+        </>
       ) : null}
 
       {displayStatus === 'FAILED' || displayStatus === 'CANCELLED' ? (
@@ -160,4 +195,6 @@ const styles = StyleSheet.create({
   saveButton: { marginTop: 14, borderRadius: 10, paddingVertical: 12, alignItems: 'center' },
   saveButtonText: { color: '#04121f', fontWeight: '700', fontSize: 15 },
   errorText: { marginTop: 12, fontSize: 13 },
+  savedRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 10, gap: 12 },
+  savedText: { flex: 1, fontSize: 13 },
 });

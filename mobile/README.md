@@ -53,6 +53,19 @@ The address is saved locally (AsyncStorage) and reused on future launches.
 - `src/theme/theme.tsx` — dark/light palette mirroring `web/index.html`'s
   CSS variables, persisted with AsyncStorage.
 
+## Where saved files go
+
+- **Android** — the shared Downloads folder. Android only lets an app write
+  there after you grant access once, so the first "Save file" shows a short
+  explanation and opens the system picker inside Downloads (create a
+  "Gil Tube" folder there and tap "Use this folder"; Android 11+ refuses the
+  Downloads root itself). The choice is remembered, so later saves never ask.
+  Change or forget it under Settings › Save location.
+- **iOS** — a "Gil Tube" folder is created automatically in the app's
+  Documents (no prompt), visible in Files › On My iPhone › Gil Tube. iOS
+  can't remember a picked folder across launches, so there's no picker.
+  This needs a dev/production build; Expo Go shows Expo's own folder.
+
 ## Notes
 
 - Saving a finished download uses `expo-file-system` to pull it into the
