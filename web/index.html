@@ -916,14 +916,18 @@
       // recreating an iframe every time.
       let ytPlayer = null;
       let ytApiReady = false;
+      // `new YT.Player()` returns immediately, but its methods (cueVideoById
+      // etc.) only exist once the player fires onReady. Until then a newly
+      // requested video is parked in pendingVideoId (latest click wins) and
+      // cued from onReady, rather than calling a method that isn't there yet.
+      let ytPlayerReady = false;
       let pendingVideoId = null;
 
       window.onYouTubeIframeAPIReady = function () {
         ytApiReady = true;
-        if (pendingVideoId) {
-          showVideoPreview(pendingVideoId);
-          pendingVideoId = null;
-        }
+        const videoId = pendingVideoId;
+        pendingVideoId = null;
+        if (videoId) showVideoPreview(videoId);
       };
 
       function showVideoPreview(videoId) {
@@ -937,14 +941,28 @@
           pendingVideoId = videoId;
           return;
         }
-        if (ytPlayer) {
-          ytPlayer.cueVideoById(videoId);
-        } else {
+
+        if (!ytPlayer) {
           ytPlayer = new YT.Player('previewIframe', {
             videoId,
             playerVars: { rel: 0, modestbranding: 1 },
+            events: {
+              onReady: () => {
+                ytPlayerReady = true;
+                const queued = pendingVideoId;
+                pendingVideoId = null;
+                if (queued) ytPlayer.cueVideoById(queued);
+              },
+            },
           });
+          return;
         }
+
+        if (!ytPlayerReady) {
+          pendingVideoId = videoId;
+          return;
+        }
+        ytPlayer.cueVideoById(videoId);
       }
 
       function showError(message) {
