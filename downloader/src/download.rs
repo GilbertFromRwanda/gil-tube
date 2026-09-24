@@ -519,11 +519,11 @@ async fn download_with_retries(
 }
 
 /// Minimum file size worth splitting into parallel range requests; below
-/// this, connection-setup overhead outweighs any speedup. Kept low (rather
-/// than e.g. 8 MiB) because audio-only tracks are commonly a few MB and
-/// benefit from parallelism just as much as video when a single connection
-/// is throttled well below the link's real capacity.
-const MIN_CHUNKED_SIZE: u64 = 2 * 1024 * 1024;
+/// this, connection-setup overhead outweighs any speedup. Kept low because
+/// a single connection is often throttled well below the link's real
+/// capacity, so even small files (short audio tracks, small videos) finish
+/// sooner when spread across several connections.
+const MIN_CHUNKED_SIZE: u64 = 256 * 1024;
 
 struct RangeProbe {
     total_size: u64,
@@ -596,6 +596,33 @@ async fn attempt_download(
 /// a range that's already in flight on another connection.
 const GRANULE_SIZE: u64 = 1024 * 1024;
 
+/// Floor for granule size, so a small file isn't shredded into requests
+/// whose per-request overhead outweighs the transfer itself.
+const MIN_GRANULE_SIZE: u64 = 32 * 1024;
+
+/// Cuts `total_size` into inclusive `(start, end)` byte ranges. Normally
+/// `GRANULE_SIZE`, but shrunk for small files so there are at least
+/// `worker_count` granules - otherwise a 1.5 MiB file would yield just two
+/// 1 MiB pieces and leave most workers idle.
+fn plan_granules(total_size: u64, worker_count: usize) -> Vec<(u64, u64)> {
+    if total_size == 0 {
+        return Vec::new();
+    }
+    let workers = worker_count.max(1) as u64;
+    let granule = total_size
+        .div_ceil(workers)
+        .clamp(MIN_GRANULE_SIZE, GRANULE_SIZE);
+
+    let mut granules = Vec::new();
+    let mut start = 0u64;
+    while start < total_size {
+        let end = (start + granule - 1).min(total_size - 1);
+        granules.push((start, end));
+        start = end + 1;
+    }
+    granules
+}
+
 /// Splits `total_size` into small granules placed on a shared queue and
 /// fetched by `worker_count` persistent workers pulling from it, each
 /// writing directly to its offset in a pre-allocated file. Faster
@@ -613,6 +640,10 @@ async fn attempt_download_chunked(
     total_size: u64,
     worker_count: usize,
 ) -> Result<(), DownloadError> {
+    let granules = plan_granules(total_size, worker_count);
+    // No point starting more connections than there are pieces to fetch.
+    let worker_count = worker_count.min(granules.len()).max(1);
+
     handle.bytes_total.store(total_size as i64, Ordering::Relaxed);
     handle.bytes_downloaded.store(0, Ordering::Relaxed);
     handle.reset_segments(worker_count).await;
@@ -630,14 +661,7 @@ async fn attempt_download_chunked(
             .map_err(|e| DownloadError::Failed(format!("could not allocate output file: {e}"), false))?;
     }
 
-    let mut granules = VecDeque::new();
-    let mut start = 0u64;
-    while start < total_size {
-        let end = (start + GRANULE_SIZE - 1).min(total_size - 1);
-        granules.push_back((start, end));
-        start = end + 1;
-    }
-    let queue = Arc::new(Mutex::new(granules));
+    let queue = Arc::new(Mutex::new(VecDeque::from(granules)));
     let failed = Arc::new(AtomicBool::new(false));
 
     let mut tasks = Vec::with_capacity(worker_count);
@@ -879,4 +903,55 @@ async fn attempt_download_sequential(
 
     let _ = file.flush().await;
     Ok(())
+}
+
+#[cfg(test)]
+mod granule_tests {
+    use super::*;
+
+    fn assert_covers_exactly(granules: &[(u64, u64)], total: u64) {
+        assert_eq!(granules.first().map(|g| g.0), Some(0));
+        assert_eq!(granules.last().map(|g| g.1), Some(total - 1));
+        for pair in granules.windows(2) {
+            assert_eq!(pair[0].1 + 1, pair[1].0, "gap or overlap between granules");
+        }
+    }
+
+    #[test]
+    fn small_file_is_split_across_all_workers() {
+        // 1.5 MiB used to become just two 1 MiB pieces with 8 workers.
+        let total = 1536 * 1024;
+        let granules = plan_granules(total, 8);
+        assert_eq!(granules.len(), 8);
+        assert_covers_exactly(&granules, total);
+    }
+
+    #[test]
+    fn large_file_keeps_the_standard_granule_size() {
+        let total = 100 * 1024 * 1024;
+        let granules = plan_granules(total, 8);
+        assert_eq!(granules.len(), 100);
+        assert_eq!(granules[0], (0, GRANULE_SIZE - 1));
+        assert_covers_exactly(&granules, total);
+    }
+
+    #[test]
+    fn tiny_file_is_not_shredded_below_the_granule_floor() {
+        let total = MIN_CHUNKED_SIZE;
+        let granules = plan_granules(total, 8);
+        assert!(granules.iter().all(|(s, e)| e - s + 1 >= MIN_GRANULE_SIZE || *e == total - 1));
+        assert_covers_exactly(&granules, total);
+    }
+
+    #[test]
+    fn uneven_size_still_covers_every_byte() {
+        let total = 1_000_003;
+        let granules = plan_granules(total, 8);
+        assert_covers_exactly(&granules, total);
+    }
+
+    #[test]
+    fn empty_file_has_no_granules() {
+        assert!(plan_granules(0, 8).is_empty());
+    }
 }
