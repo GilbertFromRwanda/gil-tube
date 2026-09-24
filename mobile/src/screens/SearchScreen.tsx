@@ -1,5 +1,5 @@
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -9,7 +9,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { ApiNotConfiguredError, cachedSearches, search } from '../api/client';
+import { ApiNotConfiguredError, cachedSearches, search, searchSuggestions } from '../api/client';
 import { SearchResult } from '../api/types';
 import { ResultCard } from '../components/ResultCard';
 import { useTheme } from '../theme/theme';
@@ -34,6 +34,40 @@ export function SearchScreen({ navigation }: Props) {
   const [cachedOffset, setCachedOffset] = useState(0);
   const [cachedHasMore, setCachedHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+
+  // Prefix matches against queries stored in Redis, fetched as you type.
+  // The sequence ref drops responses that a newer keystroke already
+  // superseded, so a slow reply for "re" can't overwrite the one for "rek".
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const suggestionSeq = useRef(0);
+  const suggestionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const onQueryChange = (text: string) => {
+    setQuery(text);
+    if (suggestionTimer.current) clearTimeout(suggestionTimer.current);
+    const prefix = text.trim();
+    if (!prefix) {
+      suggestionSeq.current += 1;
+      setSuggestions([]);
+      return;
+    }
+    suggestionTimer.current = setTimeout(async () => {
+      const seq = ++suggestionSeq.current;
+      try {
+        const data = await searchSuggestions(prefix);
+        if (seq === suggestionSeq.current) setSuggestions(data.suggestions || []);
+      } catch (err) {
+        if (seq === suggestionSeq.current) setSuggestions([]);
+      }
+    }, 150);
+  };
+
+  const pickSuggestion = (text: string) => {
+    suggestionSeq.current += 1;
+    setSuggestions([]);
+    setQuery(text);
+    runSearch(text);
+  };
 
   const loadInitial = useCallback(async () => {
     setLoading(true);
@@ -125,8 +159,8 @@ export function SearchScreen({ navigation }: Props) {
       <View style={styles.searchRow}>
         <TextInput
           value={query}
-          onChangeText={setQuery}
-          onSubmitEditing={() => runSearch(query)}
+          onChangeText={onQueryChange}
+          onSubmitEditing={() => pickSuggestion(query)}
           placeholder="Search YouTube…"
           placeholderTextColor={colors.muted}
           style={[
@@ -137,12 +171,31 @@ export function SearchScreen({ navigation }: Props) {
         />
         <Pressable
           disabled={loading}
-          onPress={() => runSearch(query)}
+          onPress={() => pickSuggestion(query)}
           style={[styles.searchButton, { backgroundColor: colors.primary, opacity: loading ? 0.7 : 1 }]}
         >
           <Text style={styles.searchButtonText}>{loading ? 'Searching…' : 'Search'}</Text>
         </Pressable>
       </View>
+
+      {suggestions.length > 0 ? (
+        <View style={[styles.suggestions, { backgroundColor: colors.panel, borderColor: colors.border }]}>
+          {suggestions.map((text, index) => (
+            <Pressable
+              key={text}
+              onPress={() => pickSuggestion(text)}
+              style={[
+                styles.suggestionItem,
+                index > 0 && { borderTopWidth: 1, borderTopColor: colors.border },
+              ]}
+            >
+              <Text style={{ color: colors.text, fontSize: 14 }} numberOfLines={1}>
+                {text}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
 
       {error ? (
         <Text style={[styles.error, { color: colors.danger }]}>{error}</Text>
@@ -206,6 +259,8 @@ const styles = StyleSheet.create({
   input: { flex: 1, borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, height: 40 },
   searchButton: { borderRadius: 10, paddingHorizontal: 16, justifyContent: 'center' },
   searchButtonText: { color: '#04121f', fontWeight: '700' },
+  suggestions: { marginHorizontal: 12, marginTop: 6, borderWidth: 1, borderRadius: 10, overflow: 'hidden' },
+  suggestionItem: { paddingVertical: 11, paddingHorizontal: 12 },
   error: { marginHorizontal: 12, marginTop: 10 },
   heading: { marginHorizontal: 12, marginTop: 12, marginBottom: 2, fontSize: 12, fontWeight: '600' },
   list: { paddingHorizontal: 6, paddingBottom: 24 },
