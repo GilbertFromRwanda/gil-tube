@@ -76,29 +76,35 @@ export function SearchScreen({ navigation }: Props) {
   const loadInitial = useCallback(async () => {
     setLoading(true);
     setError('');
+    // One outer finally so every exit path (including the early return for
+    // cached videos) clears the loading flag - otherwise the skeleton, which
+    // is keyed on `loading`, would stay up forever.
     try {
-      const data = await cachedSearches(0, PAGE_SIZE);
-      if (data.videos.length > 0) {
-        setHeading('Cached videos');
-        setResults(data.videos);
-        setCachedOffset(data.videos.length);
-        setCachedHasMore(data.has_more);
-        return;
+      try {
+        const data = await cachedSearches(0, PAGE_SIZE);
+        if (data.videos.length > 0) {
+          setHeading('Cached videos');
+          setResults(data.videos);
+          setCachedOffset(data.videos.length);
+          setCachedHasMore(data.has_more);
+          return;
+        }
+      } catch (err) {
+        // Fall through to a live search on a cold cache or unreachable server.
       }
-    } catch (err) {
-      // Fall through to a live search on a cold cache or unreachable server.
-    }
-    try {
-      setQuery(DEFAULT_QUERY);
-      const data = await search(DEFAULT_QUERY, 12);
-      setHeading(`Results for "${DEFAULT_QUERY}"`);
-      setResults(data.results);
-      setCachedHasMore(false);
-    } catch (err) {
-      if (err instanceof ApiNotConfiguredError) {
-        setError(err.message);
-      } else {
-        setError(err instanceof Error ? err.message : 'Could not load videos.');
+
+      try {
+        setQuery(DEFAULT_QUERY);
+        const data = await search(DEFAULT_QUERY, 12);
+        setHeading(`Results for "${DEFAULT_QUERY}"`);
+        setResults(data.results);
+        setCachedHasMore(false);
+      } catch (err) {
+        if (err instanceof ApiNotConfiguredError) {
+          setError(err.message);
+        } else {
+          setError(err instanceof Error ? err.message : 'Could not load videos.');
+        }
       }
     } finally {
       setLoading(false);
