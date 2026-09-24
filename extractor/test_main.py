@@ -270,3 +270,33 @@ def test_search_suggestions_empty_prefix_returns_recent_queries_and_respects_lim
 
         assert len(client.get('/api/v1/search-suggestions').get_json()['suggestions']) == 2
         assert len(client.get('/api/v1/search-suggestions?limit=1').get_json()['suggestions']) == 1
+
+
+def test_search_excludes_channels_and_playlists():
+    main.cache = main.build_cache_from_env()
+    info = {
+        'entries': [
+            {'id': 'UClGmPgUP-6fRH-yP99c9cYQ', 'ie_key': 'YoutubeTab', 'title': 'A channel'},
+            {'id': 'PLabcdefghijklmnopqrstuvwxyz0123456', 'ie_key': 'YoutubeTab', 'title': 'A playlist'},
+            {'id': 'R51PMRjyS9w', 'ie_key': 'Youtube', 'title': 'A real video'},
+        ]
+    }
+    with patch.object(main, 'run_search', return_value=info):
+        client = main.app.test_client()
+        results = client.post('/api/v1/search', json={'query': 'king james'}).get_json()['results']
+        assert [r['id'] for r in results] == ['R51PMRjyS9w']
+        assert results[0]['url'] == 'https://www.youtube.com/watch?v=R51PMRjyS9w'
+
+
+def test_cached_searches_drops_channel_entries_cached_earlier():
+    main.cache = main.build_cache_from_env()
+    main.cache.set(
+        main.cache_key('12:legacy', prefix='search'),
+        {'query': 'legacy', 'results': [
+            {'id': 'UClGmPgUP-6fRH-yP99c9cYQ', 'title': 'channel', 'url': 'https://www.youtube.com/watch?v=UClGmPgUP-6fRH-yP99c9cYQ'},
+            {'id': 'R51PMRjyS9w', 'title': 'video', 'url': 'https://www.youtube.com/watch?v=R51PMRjyS9w'},
+        ]},
+        600,
+    )
+    videos = main.app.test_client().get('/api/v1/cached-searches').get_json()['videos']
+    assert [v['id'] for v in videos] == ['R51PMRjyS9w']

@@ -144,6 +144,15 @@ def search_with_timeout(query: str, limit: int, timeout_seconds: int):
         return future.result(timeout=timeout_seconds)
 
 
+def is_video_entry(entry):
+    """Flat search results mix in channels and playlists (yt-dlp labels them
+    ie_key "YoutubeTab", and their ids are 24+ characters where a video id is
+    always 11). Those can't be previewed or downloaded - building a
+    watch?v=<channel id> link for them just produces a card that never loads."""
+    video_id = entry.get("id") or ""
+    return entry.get("ie_key") in (None, "Youtube") and 0 < len(video_id) <= 11
+
+
 def build_search_result(entry):
     thumbnails = entry.get("thumbnails") or []
     thumbnail = thumbnails[-1].get("url") if thumbnails else entry.get("thumbnail")
@@ -260,7 +269,7 @@ def search():
     duration_ms = int((time.monotonic() - started) * 1000)
 
     entries = (info or {}).get("entries") or []
-    results = [build_search_result(e) for e in entries if e and e.get("id")]
+    results = [build_search_result(e) for e in entries if e and is_video_entry(e)]
 
     result = {"query": query, "results": results}
     cache.set(key, result, SEARCH_CACHE_TTL_SECONDS)
@@ -325,7 +334,9 @@ def cached_searches():
 
         for result in (entry or {}).get("results", []):
             video_id = result.get("id")
-            if not video_id or video_id in seen_ids:
+            # Also drops channel/playlist entries cached before search
+            # started filtering them out.
+            if not video_id or len(video_id) > 11 or video_id in seen_ids:
                 continue
             seen_ids.add(video_id)
             videos.append(result)

@@ -4,6 +4,7 @@ import {
   ActivityIndicator,
   Animated,
   Easing,
+  Image,
   Modal,
   PanResponder,
   Platform,
@@ -16,12 +17,13 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import YoutubePlayer from 'react-native-youtube-iframe';
-import { createJob, preview } from '../api/client';
+import { createJob, getCachedPreview, preview } from '../api/client';
 import { PreviewInfo, SearchResult } from '../api/types';
 import { isActive, useDownloads } from '../downloads/DownloadsContext';
 import { useTheme } from '../theme/theme';
 import { formatDuration, formatLabel } from '../utils/format';
 import { DownloadPanel } from './DownloadPanel';
+import { SkeletonBlock } from './SkeletonBlock';
 
 const SLIDE_MS = 280;
 const DISMISS_DISTANCE = 120;
@@ -51,6 +53,7 @@ export function PreviewSheet({
   const [selectedFormat, setSelectedFormat] = useState('');
   const [starting, setStarting] = useState(false);
   const [playing, setPlaying] = useState(true);
+  const [playerReady, setPlayerReady] = useState(false);
   const { items, track } = useDownloads();
   const [jobId, setJobId] = useState<string | null>(null);
   const scrollRef = useRef<ScrollView>(null);
@@ -60,8 +63,12 @@ export function PreviewSheet({
   useEffect(() => {
     if (!result) return;
     closing.current = false;
-    setInfo(null);
-    setLoading(true);
+    // Show whatever is already known right away: formats from the in-memory
+    // cache (a prewarm or an earlier open), otherwise the loading skeleton.
+    const cachedInfo = getCachedPreview(result.url);
+    setInfo(cachedInfo);
+    setLoading(!cachedInfo);
+    setPlayerReady(false);
     setError('');
     setSelectedFormat('');
     setStarting(false);
@@ -77,6 +84,7 @@ export function PreviewSheet({
     }).start();
 
     let cancelled = false;
+    if (cachedInfo) return;
     preview(result.url)
       .then((data) => {
         if (!cancelled) setInfo(data);
@@ -214,11 +222,27 @@ export function PreviewSheet({
                   width={playerWidth}
                   videoId={videoId}
                   play={playing}
+                  onReady={() => setPlayerReady(true)}
                   onChangeState={(state: string) => {
                     if (state === 'paused' || state === 'ended') setPlaying(false);
                     if (state === 'playing') setPlaying(true);
                   }}
                 />
+                {/* Cover until the player is ready: the thumbnail we already
+                    have from the results grid, with a spinner, so the sheet
+                    never shows an empty black box while the embed loads. */}
+                {!playerReady ? (
+                  <View style={StyleSheet.absoluteFill} pointerEvents="none">
+                    {result?.thumbnail ? (
+                      <Image source={{ uri: result.thumbnail }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+                    ) : (
+                      <SkeletonBlock colors={colors} style={StyleSheet.absoluteFill} />
+                    )}
+                    <View style={styles.playerLoading}>
+                      <ActivityIndicator size="large" color="#fff" />
+                    </View>
+                  </View>
+                ) : null}
               </View>
             ) : null}
 
@@ -230,7 +254,11 @@ export function PreviewSheet({
             {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
 
             {loading ? (
-              <ActivityIndicator style={{ marginTop: 20 }} color={colors.primary} />
+              <View>
+                <SkeletonBlock colors={colors} style={styles.skelLabel} />
+                <SkeletonBlock colors={colors} style={styles.skelPicker} />
+                <SkeletonBlock colors={colors} style={styles.skelButton} />
+              </View>
             ) : info ? (
               <>
                 <Text style={[styles.sectionLabel, { color: colors.muted }]}>Format</Text>
@@ -300,6 +328,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   picker: { width: '100%' },
+  playerLoading: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.35)',
+  },
+  skelLabel: { width: 60, height: 12, marginTop: 18, marginBottom: 8, borderRadius: 6 },
+  skelPicker: { height: Platform.OS === 'ios' ? 170 : 48 },
+  skelButton: { height: 46, marginTop: 22 },
   downloadButton: { marginTop: 22, borderRadius: 10, paddingVertical: 13, alignItems: 'center' },
   downloadButtonText: { color: '#04121f', fontWeight: '700', fontSize: 15 },
 });

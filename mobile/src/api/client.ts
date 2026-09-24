@@ -26,6 +26,9 @@ export async function getApiBaseUrl(): Promise<string | null> {
 export async function setApiBaseUrl(url: string): Promise<void> {
   const normalized = url.trim().replace(/\/+$/, '');
   cachedBaseUrl = normalized || null;
+  // Cached formats belong to the old server; don't serve them for the new one.
+  previewCache.clear();
+  previewInflight.clear();
   if (normalized) {
     await AsyncStorage.setItem(API_BASE_STORAGE_KEY, normalized);
   } else {
@@ -91,10 +94,55 @@ export function cachedSearches(offset: number, limit: number): Promise<CachedSea
   return request(`/api/v1/cached-searches?offset=${offset}&limit=${limit}`);
 }
 
+// Format lookups are the slow part of opening a video (a full yt-dlp
+// extraction on a cache miss), so results are kept in memory. The TTL sits
+// under the server's own extraction cache (10 min) because the direct media
+// URLs inside are signed and expire. In-flight requests are shared, so a
+// background prewarm and the user tapping the same video make one call.
+const PREVIEW_CACHE_TTL_MS = 5 * 60 * 1000;
+const previewCache = new Map<string, { at: number; info: PreviewInfo }>();
+const previewInflight = new Map<string, Promise<PreviewInfo>>();
+
+export function getCachedPreview(url: string): PreviewInfo | null {
+  const entry = previewCache.get(url);
+  if (!entry) return null;
+  if (Date.now() - entry.at > PREVIEW_CACHE_TTL_MS) {
+    previewCache.delete(url);
+    return null;
+  }
+  return entry.info;
+}
+
 export function preview(url: string): Promise<PreviewInfo> {
-  return request('/api/v1/preview', {
+  const cached = getCachedPreview(url);
+  if (cached) return Promise.resolve(cached);
+
+  const inflight = previewInflight.get(url);
+  if (inflight) return inflight;
+
+  const promise = request<PreviewInfo>('/api/v1/preview', {
     method: 'POST',
     body: JSON.stringify({ url }),
+  })
+    .then((info) => {
+      previewCache.set(url, { at: Date.now(), info });
+      return info;
+    })
+    .finally(() => {
+      previewInflight.delete(url);
+    });
+  previewInflight.set(url, promise);
+  return promise;
+}
+
+// Fire-and-forget: extracts formats for likely-to-be-tapped videos ahead of
+// time, staggered so it doesn't hammer the extractor. Failures are ignored -
+// tapping the video just does the lookup then.
+export function prewarmPreviews(urls: string[], staggerMs = 500): void {
+  urls.forEach((url, index) => {
+    setTimeout(() => {
+      preview(url).catch(() => {});
+    }, index * staggerMs);
   });
 }
 
