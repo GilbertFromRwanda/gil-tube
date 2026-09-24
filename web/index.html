@@ -375,6 +375,27 @@
         color: var(--muted);
         margin: 0;
       }
+      .skeleton-card {
+        border-radius: 12px;
+        overflow: hidden;
+        background: var(--panel-alt);
+        border: 1px solid var(--border);
+      }
+      .skeleton-block {
+        background: linear-gradient(90deg, var(--border) 25%, var(--panel) 50%, var(--border) 75%);
+        background-size: 200% 100%;
+        animation: skeleton-shimmer 1.3s ease-in-out infinite;
+      }
+      .skeleton-thumb { aspect-ratio: 16 / 9; }
+      .skeleton-line { height: 10px; border-radius: 5px; margin: 0 0 8px; }
+      .skeleton-line.short { width: 55%; margin-bottom: 0; }
+      @keyframes skeleton-shimmer {
+        0% { background-position: 200% 0; }
+        100% { background-position: -200% 0; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .skeleton-block { animation: none; }
+      }
       select {
         flex: 1 1 220px;
         padding: 0.7rem 0.9rem;
@@ -984,6 +1005,28 @@
         resultsHeading.classList.remove('hidden');
       }
 
+      // Placeholder cards shown in the results grid while a search is in
+      // flight, so the layout doesn't jump and it's obvious something is
+      // happening. Deliberately not `.result-card`, so nothing that wires or
+      // counts real result cards ever picks these up.
+      function showSearchSkeletons(count = 8) {
+        const card = `
+          <div class="skeleton-card" aria-hidden="true">
+            <div class="skeleton-block skeleton-thumb"></div>
+            <div class="result-info">
+              <div class="skeleton-block skeleton-line"></div>
+              <div class="skeleton-block skeleton-line short"></div>
+            </div>
+          </div>`;
+        searchResults.innerHTML = card.repeat(count);
+        searchResults.classList.remove('hidden');
+        searchResults.setAttribute('aria-busy', 'true');
+      }
+
+      function clearSearchSkeletons() {
+        searchResults.removeAttribute('aria-busy');
+      }
+
       async function runSearch(query) {
         searchError.classList.add('hidden');
         searchError.textContent = '';
@@ -996,6 +1039,7 @@
 
         searchButton.disabled = true;
         searchButton.textContent = 'Searching…';
+        showSearchSkeletons();
 
         try {
           const response = await fetch(`${API_BASE}/api/v1/search`, {
@@ -1019,7 +1063,9 @@
         } catch (err) {
           searchError.textContent = `Connection error: ${err.message}`;
           searchError.classList.remove('hidden');
+          searchResults.classList.add('hidden');
         } finally {
+          clearSearchSkeletons();
           searchButton.disabled = false;
           searchButton.textContent = 'Search';
         }
@@ -1050,6 +1096,7 @@
       async function loadInitialResults() {
         searchInput.value = DEFAULT_SEARCH_QUERY;
         cachedVideosHasMore = false;
+        showSearchSkeletons();
         try {
           const response = await fetch(`${API_BASE}/api/v1/cached-searches?limit=${CACHED_PAGE_SIZE}&offset=0`);
           if (response.ok) {
