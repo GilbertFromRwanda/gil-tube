@@ -41,9 +41,12 @@ The address is saved locally (AsyncStorage) and reused on future launches.
   you tap a video: plays it, lists formats in a picker, starts the job.
   Plain `Modal` + `Animated` (drag the handle down, tap the backdrop, or
   Android back to dismiss), so it needs no gesture/reanimated native deps.
-- `src/components/DownloadPanel.tsx` — rendered inside the sheet, below the
-  Download button: polls job + progress every second, IDM-style segment
-  bars, mux phase, cancel, save/share the finished file.
+- `src/downloads/DownloadsContext.tsx` — app-level store of download jobs
+  with one shared poller (job + progress once a second, stopped when
+  nothing is running), so progress survives closing the preview sheet.
+- `src/components/DownloadPanel.tsx` — one job's card: IDM-style segment
+  bars, mux phase, cancel, save/share. Shown inside the sheet under the
+  Download button and in `DownloadsTray` (the list under the search box).
 - `src/screens/` — `SearchScreen` (grid + infinite scroll over cached
   videos, live search, hosts the preview sheet), `SettingsScreen`,
   `ScanQrScreen` (camera QR scan, via `expo-camera`).
