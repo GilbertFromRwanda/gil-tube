@@ -20,6 +20,7 @@ import { createJob, preview } from '../api/client';
 import { Job, PreviewInfo, SearchResult } from '../api/types';
 import { useTheme } from '../theme/theme';
 import { formatDuration, formatLabel } from '../utils/format';
+import { DownloadPanel } from './DownloadPanel';
 
 const SLIDE_MS = 280;
 const DISMISS_DISTANCE = 120;
@@ -32,11 +33,9 @@ const DISMISS_VELOCITY = 0.9;
 export function PreviewSheet({
   result,
   onClose,
-  onDownloadStarted,
 }: {
   result: SearchResult | null;
   onClose: () => void;
-  onDownloadStarted: (job: Job, title: string) => void;
 }) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
@@ -51,6 +50,9 @@ export function PreviewSheet({
   const [selectedFormat, setSelectedFormat] = useState('');
   const [starting, setStarting] = useState(false);
   const [playing, setPlaying] = useState(true);
+  const [job, setJob] = useState<Job | null>(null);
+  const [jobActive, setJobActive] = useState(false);
+  const scrollRef = useRef<ScrollView>(null);
 
   const url = result?.url || '';
 
@@ -63,6 +65,8 @@ export function PreviewSheet({
     setSelectedFormat('');
     setStarting(false);
     setPlaying(true);
+    setJob(null);
+    setJobActive(false);
 
     translateY.setValue(windowHeight);
     Animated.timing(translateY, {
@@ -148,10 +152,12 @@ export function PreviewSheet({
     setStarting(true);
     setError('');
     try {
-      const job = await createJob(url, selectedFormat || undefined);
-      slideOutThen(() => onDownloadStarted(job, title));
+      setJob(await createJob(url, selectedFormat || undefined));
+      // Progress renders below the button; bring it into view once laid out.
+      setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 150);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not start the download.');
+    } finally {
       setStarting(false);
     }
   };
@@ -191,6 +197,7 @@ export function PreviewSheet({
           </View>
 
           <ScrollView
+            ref={scrollRef}
             contentContainerStyle={[styles.content, { paddingBottom: 20 + insets.bottom }]}
             showsVerticalScrollIndicator={false}
             bounces={false}
@@ -238,12 +245,27 @@ export function PreviewSheet({
                 </View>
 
                 <Pressable
-                  disabled={starting}
+                  disabled={starting || jobActive}
                   onPress={startDownload}
-                  style={[styles.downloadButton, { backgroundColor: colors.primary, opacity: starting ? 0.7 : 1 }]}
+                  style={[
+                    styles.downloadButton,
+                    { backgroundColor: colors.primary, opacity: starting || jobActive ? 0.7 : 1 },
+                  ]}
                 >
-                  <Text style={styles.downloadButtonText}>{starting ? 'Starting…' : 'Download'}</Text>
+                  <Text style={styles.downloadButtonText}>
+                    {starting ? 'Starting…' : jobActive ? 'Downloading…' : job ? 'Download again' : 'Download'}
+                  </Text>
                 </Pressable>
+
+                {job ? (
+                  <DownloadPanel
+                    key={job.job_id}
+                    jobId={job.job_id}
+                    title={title}
+                    container={job.container}
+                    onActiveChange={setJobActive}
+                  />
+                ) : null}
               </>
             ) : null}
           </ScrollView>

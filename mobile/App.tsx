@@ -4,7 +4,6 @@ import { StatusBar } from 'expo-status-bar';
 import React from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { RootStackParamList } from './src/navigation';
-import { DownloadScreen } from './src/screens/DownloadScreen';
 import { ScanQrScreen } from './src/screens/ScanQrScreen';
 import { SearchScreen } from './src/screens/SearchScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
@@ -25,7 +24,6 @@ function Navigator() {
     >
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         <Stack.Screen name="Search" component={SearchScreen} />
-        <Stack.Screen name="Download" component={DownloadScreen} options={{ headerShown: true, title: 'Download' }} />
         <Stack.Screen name="Settings" component={SettingsScreen} options={{ headerShown: true, title: 'Settings' }} />
         <Stack.Screen
           name="ScanQr"

@@ -234,14 +234,7 @@ export function SearchScreen({ navigation }: Props) {
         />
       )}
 
-      <PreviewSheet
-        result={selected}
-        onClose={() => setSelected(null)}
-        onDownloadStarted={(job, title) => {
-          setSelected(null);
-          navigation.navigate('Download', { jobId: job.job_id, title, container: job.container });
-        }}
-      />
+      <PreviewSheet result={selected} onClose={() => setSelected(null)} />
     </View>
   );
 }
