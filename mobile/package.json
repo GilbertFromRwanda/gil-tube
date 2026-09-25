@@ -34,7 +34,9 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "test:handoff": "node scripts/test-handoff.mjs"
+    "test:handoff": "node scripts/test-handoff.mjs",
+    "test:feed": "node scripts/test-feed.mjs",
+    "test": "npm run test:handoff && npm run test:feed"
   },
   "private": true
 }

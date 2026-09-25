@@ -1,7 +1,6 @@
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   FlatList,
   Platform,
   Pressable,
@@ -14,6 +13,7 @@ import {
 import { ApiNotConfiguredError, cachedSearches, prewarmPreviews, search, searchSuggestions } from '../api/client';
 import { SearchResult } from '../api/types';
 import { DownloadsTray } from '../components/DownloadsTray';
+import { CACHED_PAGE_SIZE, FeedEngine, FeedSnapshot } from '../feed/feedEngine';
 import { usePlayer } from '../player/PlayerContext';
 import { ResultCard } from '../components/ResultCard';
 import { SkeletonGrid } from '../components/SkeletonGrid';
@@ -26,27 +26,34 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Search'>;
 const keyExtractor = (item: SearchResult, index: number) => `${item.id || item.url}-${index}`;
 
 const DEFAULT_QUERY = 'Rwanda SDA music';
-const PAGE_SIZE = 24;
+
+const EMPTY_FEED: FeedSnapshot = { items: [], hasMore: false, loadingMore: false, ended: false };
 
 export function SearchScreen({ navigation }: Props) {
   const { colors, theme, toggleTheme } = useTheme();
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [heading, setHeading] = useState('');
   const { open: openVideo, mode: playerMode } = usePlayer();
   const [refreshing, setRefreshing] = useState(false);
-  // What the list currently shows: a live search's query, or null for the
-  // cached-videos feed. Pull-to-refresh reloads whichever this is.
-  const [activeQuery, setActiveQuery] = useState<string | null>(null);
 
-  // Cached-videos view is a paged feed (infinite scroll); a live search
-  // returns one fixed batch from yt-dlp per query, so there's nothing to
-  // page through there. Mirrors web/index.html's cachedVideosHasMore logic.
-  const [cachedOffset, setCachedOffset] = useState(0);
-  const [cachedHasMore, setCachedHasMore] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
+  // The endless feed (cached videos, then live YouTube results, paged deeper
+  // as you scroll) lives in an engine so its rules are testable; the screen
+  // just shows its latest snapshot.
+  const engineRef = useRef<FeedEngine | null>(null);
+  const [feed, setFeed] = useState<FeedSnapshot>(EMPTY_FEED);
+  if (!engineRef.current) {
+    const created: FeedEngine = new FeedEngine(
+      {
+        searchPage: (q, offset, limit, refresh) => search(q, limit, !!refresh, offset),
+        cachedPage: (offset, limit) => cachedSearches(offset, limit),
+      },
+      () => setFeed(created.snapshot()),
+    );
+    engineRef.current = created;
+  }
+  const engine = engineRef.current;
 
   // Prefix matches against queries stored in Redis, fetched as you type.
   // The sequence ref drops responses that a newer keystroke already
@@ -90,13 +97,12 @@ export function SearchScreen({ navigation }: Props) {
     // is keyed on `loading`, would stay up forever.
     try {
       try {
-        const data = await cachedSearches(0, PAGE_SIZE);
+        const data = await cachedSearches(0, CACHED_PAGE_SIZE);
         if (data.videos.length > 0) {
           setHeading('Cached videos');
-          setActiveQuery(null);
-          setResults(data.videos);
-          setCachedOffset(data.videos.length);
-          setCachedHasMore(data.has_more);
+          // When the cached videos run out the feed carries on with live
+          // results for the default query.
+          engine.startCached(data.videos, data.has_more, DEFAULT_QUERY);
           return;
         }
       } catch (err) {
@@ -105,11 +111,8 @@ export function SearchScreen({ navigation }: Props) {
 
       try {
         setQuery(DEFAULT_QUERY);
-        setActiveQuery(DEFAULT_QUERY);
-        const data = await search(DEFAULT_QUERY, 12);
+        await engine.startSearch(DEFAULT_QUERY);
         setHeading(`Results for "${DEFAULT_QUERY}"`);
-        setResults(data.results);
-        setCachedHasMore(false);
       } catch (err) {
         if (err instanceof ApiNotConfiguredError) {
           setError(err.message);
@@ -120,7 +123,7 @@ export function SearchScreen({ navigation }: Props) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [engine]);
 
   useEffect(() => {
     loadInitial();
@@ -128,7 +131,7 @@ export function SearchScreen({ navigation }: Props) {
 
   // Extract formats for the first few results in the background, so tapping
   // one opens with its formats already loaded.
-  const firstUrls = results
+  const firstUrls = feed.items
     .slice(0, 3)
     .map((r) => r.url)
     .filter(Boolean)
@@ -138,41 +141,39 @@ export function SearchScreen({ navigation }: Props) {
     prewarmPreviews(firstUrls.split('|'));
   }, [loading, firstUrls]);
 
-  const runSearch = useCallback(async (text: string) => {
-    if (!text.trim()) return;
-    setLoading(true);
-    setError('');
-    setCachedHasMore(false);
-    try {
-      const data = await search(text.trim(), 12);
-      setActiveQuery(text.trim());
-      setHeading(`Results for "${text.trim()}"`);
-      setResults(data.results);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Search failed.');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const runSearch = useCallback(
+    async (text: string) => {
+      const q = text.trim();
+      if (!q) return;
+      setLoading(true);
+      setError('');
+      try {
+        await engine.startSearch(q);
+        setHeading(`Results for "${q}"`);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Search failed.');
+      } finally {
+        setLoading(false);
+      }
+    },
+    [engine],
+  );
 
   // Pull-to-refresh keeps the list mounted (so the native pull spinner
   // shows) instead of swapping to the skeleton, and re-fetches whatever the
   // list is showing: a live search bypasses the server's cached copy; the
-  // cached feed reloads from the top to pick up newly cached videos.
+  // cached feed reloads from the top to pick up newly cached videos. If it
+  // fails the current list stays as it was.
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     setError('');
     try {
-      if (activeQuery) {
-        const data = await search(activeQuery, 12, true);
-        setResults(data.results);
-        setCachedHasMore(false);
+      if (engine.mode === 'search') {
+        await engine.startSearch(engine.query, true);
       } else {
-        const data = await cachedSearches(0, PAGE_SIZE);
+        const data = await cachedSearches(0, CACHED_PAGE_SIZE);
         if (data.videos.length > 0) {
-          setResults(data.videos);
-          setCachedOffset(data.videos.length);
-          setCachedHasMore(data.has_more);
+          engine.startCached(data.videos, data.has_more, engine.query || DEFAULT_QUERY);
         } else {
           await loadInitial();
         }
@@ -182,7 +183,7 @@ export function SearchScreen({ navigation }: Props) {
     } finally {
       setRefreshing(false);
     }
-  }, [activeQuery, loadInitial]);
+  }, [engine, loadInitial]);
 
   // Stable identities for everything the list receives: new functions or
   // style arrays every render make the list (and every card) re-render.
@@ -193,11 +194,11 @@ export function SearchScreen({ navigation }: Props) {
   const listContentStyle = useMemo(
     () => [
       styles.list,
-      results.length === 0 && styles.listEmpty,
+      feed.items.length === 0 && styles.listEmpty,
       // Keep the last results clear of the docked mini player.
       playerMode === 'mini' && styles.listMini,
     ],
-    [results.length, playerMode],
+    [feed.items.length, playerMode],
   );
   const refreshControl = useMemo(
     () => (
@@ -212,20 +213,19 @@ export function SearchScreen({ navigation }: Props) {
     [refreshing, onRefresh, colors],
   );
 
-  const loadMoreCached = useCallback(async () => {
-    if (!cachedHasMore || loadingMore) return;
-    setLoadingMore(true);
-    try {
-      const data = await cachedSearches(cachedOffset, PAGE_SIZE);
-      setResults((prev) => [...prev, ...data.videos]);
-      setCachedOffset(cachedOffset + data.videos.length);
-      setCachedHasMore(data.has_more);
-    } catch (err) {
-      // Leave the list as-is; the user can pull again or search directly.
-    } finally {
-      setLoadingMore(false);
+  const loadMore = useCallback(() => {
+    engine.loadMore();
+  }, [engine]);
+
+  // Placeholder tiles while the next page loads; a quiet note when the results
+  // truly end.
+  const listFooter = useMemo(() => {
+    if (feed.loadingMore) return <SkeletonGrid colors={colors} rows={1} />;
+    if (feed.ended) {
+      return <Text style={[styles.endNote, { color: colors.muted }]}>You have reached the end of the results.</Text>;
     }
-  }, [cachedHasMore, cachedOffset, loadingMore]);
+    return null;
+  }, [feed.loadingMore, feed.ended, colors]);
 
   return (
     <View style={[styles.container, { backgroundColor: colors.bg }]}>
@@ -300,7 +300,7 @@ export function SearchScreen({ navigation }: Props) {
         <SkeletonGrid colors={colors} />
       ) : (
         <FlatList
-          data={results}
+          data={feed.items}
           keyExtractor={keyExtractor}
           numColumns={2}
           contentContainerStyle={listContentStyle}
@@ -313,11 +313,11 @@ export function SearchScreen({ navigation }: Props) {
           windowSize={7}
           updateCellsBatchingPeriod={50}
           removeClippedSubviews={Platform.OS === 'android'}
-          onEndReachedThreshold={0.4}
-          onEndReached={loadMoreCached}
-          ListFooterComponent={
-            loadingMore ? <ActivityIndicator style={{ marginVertical: 16 }} color={colors.primary} /> : null
-          }
+          // Start the next page a couple of screens early so it is usually
+          // ready before you get to the bottom.
+          onEndReachedThreshold={1.5}
+          onEndReached={loadMore}
+          ListFooterComponent={listFooter}
           ListEmptyComponent={
             !loading ? (
               <Text style={[styles.empty, { color: colors.muted }]}>No results yet.</Text>
@@ -364,4 +364,5 @@ const styles = StyleSheet.create({
   listEmpty: { flexGrow: 1 },
   listMini: { paddingBottom: 120 },
   empty: { textAlign: 'center', marginTop: 32 },
+  endNote: { textAlign: 'center', fontSize: 12, paddingVertical: 20 },
 });

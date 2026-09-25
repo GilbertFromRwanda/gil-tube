@@ -85,6 +85,18 @@ This repository is intentionally a working foundation rather than a full product
    `GET /api/v1/jobs/:id/file`, which streams the finished file from the
    downloader's storage through the API.
 
+## Endless scroll
+
+The video list never dead-ends. It shows your cached (Redis) videos first; when
+those run out it carries on with live YouTube results for the query being
+shown, and any search pages deeper as you scroll. `POST /api/v1/search` takes an
+`offset` and answers with `next_offset` and `has_more`; each page is cached in
+Redis separately. Depth is capped at 300 results because deeper pages get slower
+(YouTube re-walks the earlier ones: ~3 s for the first page, ~10 s by result 120)
+and relevance fades. Both clients drop repeats, prefetch the next page and show
+placeholder tiles while it loads. Tests: `node scripts/test-web-feed.mjs` (web),
+`npm run test:feed` in `mobile/`, plus the extractor and API suites.
+
 ## Getting the mobile app onto a phone
 
 The web UI's 📱 button opens a two-step dialog: **1 · Install** shows a QR code

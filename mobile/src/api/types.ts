@@ -9,6 +9,10 @@ export interface SearchResult {
 
 export interface SearchResponse {
   results: SearchResult[];
+  // Paging: where the next page starts, and whether YouTube has more.
+  offset?: number;
+  next_offset?: number;
+  has_more?: boolean;
 }
 
 export interface CachedSearchesResponse {
