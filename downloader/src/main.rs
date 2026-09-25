@@ -37,6 +37,9 @@ async fn download_handler(State(state): State<Arc<AppState>>, Json(req): Json<Do
     }
 }
 
+/// Read size when streaming a finished file to a client.
+const FILE_STREAM_BUFFER_BYTES: usize = 1024 * 1024;
+
 async fn file_handler(State(state): State<Arc<AppState>>, AxumPath(filename): AxumPath<String>) -> impl IntoResponse {
     let path = match download::resolve_output_path(&state, &filename) {
         Ok(p) => p,
@@ -55,7 +58,10 @@ async fn file_handler(State(state): State<Arc<AppState>>, AxumPath(filename): Ax
     };
 
     let content_length = file.metadata().await.ok().map(|m| m.len());
-    let stream = tokio_util::io::ReaderStream::new(file);
+    // ReaderStream's default is a 4 KiB buffer, which turns a 400 MB file into
+    // ~100,000 tiny reads (each one handed to a blocking thread by tokio::fs)
+    // and capped throughput near 11-18 MB/s even on the same machine.
+    let stream = tokio_util::io::ReaderStream::with_capacity(file, FILE_STREAM_BUFFER_BYTES);
     let body = axum::body::Body::from_stream(stream);
 
     let mut builder = axum::http::Response::builder()
