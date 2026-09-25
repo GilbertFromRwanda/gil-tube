@@ -80,33 +80,35 @@
         flex-shrink: 0;
       }
       .theme-toggle:hover:not(:disabled) { background: var(--panel-alt); filter: brightness(1.15); }
-      .modal-overlay {
-        position: fixed;
-        inset: 0;
-        z-index: 50;
+      /* The mobile-app panel takes over the right column (where the video
+         preview normally is) instead of floating over the page. */
+      .mobile-panel {
+        padding: 1.25rem 1.3rem;
+        text-align: center;
+        max-height: calc(100vh - 3rem);
+        overflow-y: auto;
+      }
+      .mobile-panel.hidden { display: none; }
+      .layout-side.showing-mobile > :not(#mobilePanel) { display: none; }
+      /* Stacked (narrow) layout puts the right column after the whole results
+         list; while the panel is open it moves to the top so it isn't miles
+         below the fold. */
+      @media (max-width: 879.98px) {
+        .layout-side.showing-mobile { order: -1; }
+      }
+      .panel-header {
         display: flex;
         align-items: center;
-        justify-content: center;
-        padding: 1.25rem;
-        background: rgba(2, 6, 23, 0.6);
+        justify-content: space-between;
+        margin: 0 0 0.9rem;
       }
-      .modal-overlay.hidden { display: none; }
-      .modal-card {
-        position: relative;
-        width: 100%;
-        max-width: 320px;
-        padding: 1.5rem;
-        border-radius: 16px;
-        background: var(--panel);
-        border: 1px solid var(--border);
-        box-shadow: var(--shadow);
-        text-align: center;
+      .mobile-panel h2 { margin: 0; font-size: 1.05rem; }
+      .theme-toggle[aria-expanded="true"] {
+        background: var(--primary);
+        color: #04121f;
+        border-color: var(--primary);
       }
-      .modal-card h2 { margin: 0 0 0.6rem; font-size: 1.05rem; }
-      .modal-close {
-        position: absolute;
-        top: 0.6rem;
-        right: 0.6rem;
+      .panel-close {
         box-sizing: border-box;
         width: 28px;
         height: 28px;
@@ -120,8 +122,8 @@
         align-items: center;
         justify-content: center;
       }
-      .modal-hint { color: var(--muted); font-size: 0.82rem; line-height: 1.5; margin: 0 0 1rem; }
-      .modal-qr {
+      .panel-hint { color: var(--muted); font-size: 0.82rem; line-height: 1.5; margin: 0 0 1rem; }
+      .panel-qr {
         display: flex;
         align-items: center;
         justify-content: center;
@@ -131,9 +133,9 @@
         background: #fff;
         border-radius: 10px;
       }
-      .modal-qr canvas { display: block; }
-      .modal-url-label { color: var(--muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 0.3rem; }
-      .modal-url {
+      .panel-qr canvas { display: block; }
+      .panel-url-label { color: var(--muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 0.3rem; }
+      .panel-url {
         display: block;
         width: 100%;
         padding: 0.5rem 0.7rem;
@@ -145,8 +147,8 @@
         font-size: 0.85rem;
         box-sizing: border-box;
       }
-      .modal-edit-hint { color: var(--muted); font-size: 0.72rem; margin: 0.4rem 0 0; }
-      .modal-tabs {
+      .panel-edit-hint { color: var(--muted); font-size: 0.72rem; margin: 0.4rem 0 0; }
+      .panel-tabs {
         display: flex;
         gap: 4px;
         padding: 3px;
@@ -155,7 +157,7 @@
         background: var(--panel-alt);
         border: 1px solid var(--border);
       }
-      .modal-tab {
+      .panel-tab {
         flex: 1;
         padding: 0.45rem 0.5rem;
         border-radius: 8px;
@@ -167,9 +169,9 @@
         box-shadow: none;
         cursor: pointer;
       }
-      .modal-tab.active { background: var(--panel); color: var(--text); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18); }
-      .modal-panel.hidden, .modal-older.hidden { display: none; }
-      .modal-download {
+      .panel-tab.active { background: var(--panel); color: var(--text); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18); }
+      .panel-section.hidden, .panel-older.hidden { display: none; }
+      .panel-download {
         display: block;
         margin: 0 0 0.9rem;
         padding: 0.7rem 1rem;
@@ -180,12 +182,12 @@
         font-size: 0.9rem;
         text-decoration: none;
       }
-      .modal-download small { display: block; font-weight: 500; opacity: 0.75; margin-top: 2px; }
-      .modal-download[aria-disabled="true"] { opacity: 0.45; pointer-events: none; }
-      .modal-older { margin: 0.9rem 0 0; text-align: left; font-size: 0.78rem; color: var(--muted); }
-      .modal-older summary { cursor: pointer; text-align: center; }
-      .modal-older ul { list-style: none; margin: 0.5rem 0 0; padding: 0; display: grid; gap: 6px; }
-      .modal-older a {
+      .panel-download small { display: block; font-weight: 500; opacity: 0.75; margin-top: 2px; }
+      .panel-download[aria-disabled="true"] { opacity: 0.45; pointer-events: none; }
+      .panel-older { margin: 0.9rem 0 0; text-align: left; font-size: 0.78rem; color: var(--muted); }
+      .panel-older summary { cursor: pointer; text-align: center; }
+      .panel-older ul { list-style: none; margin: 0.5rem 0 0; padding: 0; display: grid; gap: 6px; }
+      .panel-older a {
         display: block;
         padding: 0.4rem 0.6rem;
         border-radius: 8px;
@@ -194,7 +196,7 @@
         color: var(--text);
         text-decoration: none;
       }
-      .modal-older a small { display: block; color: var(--muted); }
+      .panel-older a small { display: block; color: var(--muted); }
       .topbar {
         position: sticky;
         top: 0;
@@ -729,44 +731,10 @@
           </div>
           <button id="searchButton" type="submit">Search</button>
         </form>
-        <button id="mobileConnectToggle" class="theme-toggle" type="button" title="Get the mobile app (install / connect)">📱</button>
+        <button id="mobileConnectToggle" class="theme-toggle" type="button" title="Get the mobile app (install / connect)" aria-expanded="false" aria-controls="mobilePanel">📱</button>
         <button id="themeToggle" class="theme-toggle" type="button" title="Toggle light/dark theme">🌙</button>
       </div>
     </header>
-
-    <div id="mobileConnectModal" class="modal-overlay hidden">
-      <div class="modal-card">
-        <button id="mobileConnectClose" class="modal-close" type="button" aria-label="Close">✕</button>
-        <h2>Get the mobile app</h2>
-        <div class="modal-tabs" role="tablist">
-          <button id="tabInstall" class="modal-tab active" type="button" role="tab" aria-selected="true">1 · Install</button>
-          <button id="tabConnect" class="modal-tab" type="button" role="tab" aria-selected="false">2 · Connect</button>
-        </div>
-
-        <div id="panelInstall" class="modal-panel">
-          <p id="installHint" class="modal-hint"></p>
-          <div id="installQr" class="modal-qr"></div>
-          <a id="installLink" class="modal-download" href="#" aria-disabled="true">
-            ⬇ Download the Android app (APK)<small id="installMeta"></small>
-          </a>
-          <p class="modal-url-label">Download address</p>
-          <input id="installUrl" class="modal-url" type="text" autocomplete="off" spellcheck="false" />
-          <p id="installStatus" class="modal-edit-hint"></p>
-          <details id="installOlder" class="modal-older hidden">
-            <summary id="installOlderSummary">Older builds</summary>
-            <ul id="installOlderList"></ul>
-          </details>
-        </div>
-
-        <div id="panelConnect" class="modal-panel hidden">
-          <p id="mobileConnectHint" class="modal-hint"></p>
-          <div id="mobileConnectQr" class="modal-qr"></div>
-          <p class="modal-url-label">API address</p>
-          <input id="mobileConnectUrl" class="modal-url" type="text" autocomplete="off" spellcheck="false" />
-          <p class="modal-edit-hint">Not right? Edit it (e.g. swap in your computer's LAN IP) - the QR code updates as you type.</p>
-        </div>
-      </div>
-    </div>
 
     <div class="page">
     <div class="app">
@@ -778,7 +746,41 @@
           <div id="searchResults" class="search-results hidden"></div>
         </div>
 
-        <div class="layout-side">
+        <div id="layoutSide" class="layout-side">
+          <section id="mobilePanel" class="card mobile-panel hidden" aria-label="Get the mobile app">
+                    <div class="panel-header">
+                      <h2>Get the mobile app</h2>
+                      <button id="mobileConnectClose" class="panel-close" type="button" aria-label="Close panel">✕</button>
+                    </div>
+                <div class="panel-tabs" role="tablist">
+                  <button id="tabInstall" class="panel-tab active" type="button" role="tab" aria-selected="true">1 · Install</button>
+                  <button id="tabConnect" class="panel-tab" type="button" role="tab" aria-selected="false">2 · Connect</button>
+                </div>
+          
+                <div id="panelInstall" class="panel-section">
+                  <p id="installHint" class="panel-hint"></p>
+                  <div id="installQr" class="panel-qr"></div>
+                  <a id="installLink" class="panel-download" href="#" aria-disabled="true">
+                    ⬇ Download the Android app (APK)<small id="installMeta"></small>
+                  </a>
+                  <p class="panel-url-label">Download address</p>
+                  <input id="installUrl" class="panel-url" type="text" autocomplete="off" spellcheck="false" />
+                  <p id="installStatus" class="panel-edit-hint"></p>
+                  <details id="installOlder" class="panel-older hidden">
+                    <summary id="installOlderSummary">Older builds</summary>
+                    <ul id="installOlderList"></ul>
+                  </details>
+                </div>
+          
+                <div id="panelConnect" class="panel-section hidden">
+                  <p id="mobileConnectHint" class="panel-hint"></p>
+                  <div id="mobileConnectQr" class="panel-qr"></div>
+                  <p class="panel-url-label">API address</p>
+                  <input id="mobileConnectUrl" class="panel-url" type="text" autocomplete="off" spellcheck="false" />
+                  <p class="panel-edit-hint">Not right? Edit it (e.g. swap in your computer's LAN IP) - the QR code updates as you type.</p>
+                </div>
+                  </section>
+
           <button id="pasteLinkToggle" class="link-button" type="button">+ Paste a link directly</button>
 
           <div id="pasteLinkCard" class="card hidden">
@@ -851,7 +853,8 @@
 
       const themeToggle = document.getElementById('themeToggle');
       const mobileConnectToggle = document.getElementById('mobileConnectToggle');
-      const mobileConnectModal = document.getElementById('mobileConnectModal');
+      const mobilePanel = document.getElementById('mobilePanel');
+      const layoutSide = document.getElementById('layoutSide');
       const mobileConnectClose = document.getElementById('mobileConnectClose');
       const mobileConnectHint = document.getElementById('mobileConnectHint');
       const mobileConnectQr = document.getElementById('mobileConnectQr');
@@ -1078,8 +1081,27 @@
         else showConnectPanel();
       }
 
-      function openMobileConnectModal() {
-        mobileConnectModal.classList.remove('hidden');
+      // Only one thing at a time lives in the right column: the app panel
+      // replaces the video preview while open (the preview comes back when it
+      // closes or when a video is chosen). Playback is paused so nothing keeps
+      // playing out of sight.
+      function pausePreviewVideo() {
+        try {
+          if (ytPlayer && ytPlayerReady && typeof ytPlayer.pauseVideo === 'function') ytPlayer.pauseVideo();
+        } catch (err) {
+          // The player isn't usable yet; nothing to pause.
+        }
+      }
+
+      function isMobilePanelOpen() {
+        return !mobilePanel.classList.contains('hidden');
+      }
+
+      function openMobilePanel() {
+        pausePreviewVideo();
+        mobilePanel.classList.remove('hidden');
+        layoutSide.classList.add('showing-mobile');
+        mobileConnectToggle.setAttribute('aria-expanded', 'true');
         let remembered = 'install';
         try {
           remembered = localStorage.getItem('mobileModalTab') === 'connect' ? 'connect' : 'install';
@@ -1087,14 +1109,23 @@
           // Storage unavailable: start on Install.
         }
         selectModalTab(remembered);
+        // On narrow screens the right column sits below the results.
+        mobilePanel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+
+      function closeMobilePanel() {
+        if (!isMobilePanelOpen()) return;
+        mobilePanel.classList.add('hidden');
+        layoutSide.classList.remove('showing-mobile');
+        mobileConnectToggle.setAttribute('aria-expanded', 'false');
       }
 
       tabInstall.addEventListener('click', () => selectModalTab('install'));
       tabConnect.addEventListener('click', () => selectModalTab('connect'));
-      mobileConnectToggle.addEventListener('click', openMobileConnectModal);
-      mobileConnectClose.addEventListener('click', () => mobileConnectModal.classList.add('hidden'));
-      mobileConnectModal.addEventListener('click', (event) => {
-        if (event.target === mobileConnectModal) mobileConnectModal.classList.add('hidden');
+      mobileConnectToggle.addEventListener('click', () => (isMobilePanelOpen() ? closeMobilePanel() : openMobilePanel()));
+      mobileConnectClose.addEventListener('click', closeMobilePanel);
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && isMobilePanelOpen()) closeMobilePanel();
       });
 
       let mobileConnectDebounce = null;
@@ -1696,6 +1727,7 @@
       // paste-a-URL flow (after /api/v1/preview) and the search-click flow
       // (from the search result itself, before formats have even loaded).
       function renderPreviewShell(info) {
+        closeMobilePanel();
         previewTitle.textContent = info.title || 'Untitled';
         const metaParts = [];
         if (info.duration) metaParts.push(formatDuration(info.duration));
