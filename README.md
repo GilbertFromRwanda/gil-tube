@@ -92,13 +92,26 @@ and a download link for the Android APK, and **2 · Connect** shows a QR code th
 app scans to find your API server.
 
 The APK is served by the same web server as the page, so it works on your Wi-Fi
-with no store or internet. It isn't committed (about 100 MB); put the newest
-build there with:
+with no store or internet. Builds aren't committed (about 100 MB each); one
+command builds in the Expo cloud, waits, and publishes:
 
 ```bash
-cd mobile && eas build --platform android --profile preview   # cloud build
-./publish-apk.sh    # copies the latest finished build into web/app/
+./build-apk.sh        # cloud build -> waits -> publishes to web/app/
+./publish-apk.sh      # publish the newest already-finished build (--count 3, --keep 5)
 ```
+
+**Versioning.** Every build is identifiable three ways:
+- **Build number** - Android's versionCode, incremented automatically by EAS on
+  every preview build (`eas.json`: `autoIncrement`, stored remotely).
+- **Version** - `version` in `mobile/app.json`; bump it for a release (1.0.0 ->
+  1.1.0).
+- **Commit** - the git commit the build was made from, embedded via
+  `mobile/app.config.js`.
+
+The app shows them under Settings › About ("Version 1.0.0 · build 7 ·
+5211c72"). Published files are named `GilTube-v1.0.0-b7-5211c72.apk`, and
+`web/app/versions.json` lists them (with size, date and checksum); the 📱
+dialog offers the newest and lists older builds. The newest 3 are kept on disk.
 
 Open the web UI from your computer's LAN address (`./start.sh` opens it that
 way) so the QR codes point somewhere your phone can reach.
