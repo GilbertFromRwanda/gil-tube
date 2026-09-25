@@ -102,6 +102,8 @@ export function PlayerHost() {
   // Long-lived callbacks (the handoff, audio events) must see the latest values.
   const nextRef = useRef(next);
   nextRef.current = next;
+  const prevRef = useRef(prev);
+  prevRef.current = prev;
   const autoplayRef = useRef(autoplay);
   autoplayRef.current = autoplay;
   const setAudioModeRef = useRef(setAudioMode);
@@ -215,6 +217,30 @@ export function PlayerHost() {
       } catch (err) {
         console.warn('Audio status handler failed:', err);
       }
+    });
+    return () => subscription.remove();
+  }, [audio]);
+
+  // Next / previous pressed on the notification, lock screen or a headset while
+  // audio plays. Needs the patched expo-audio (patches/expo-audio+*.patch),
+  // which reports them as a 'remoteCommand' event; without it, nothing arrives.
+  useEffect(() => {
+    const player = audioRef.current as unknown as {
+      addListener: (event: string, cb: (payload: { command?: string }) => void) => { remove: () => void };
+    };
+    const subscription = player.addListener('remoteCommand', (payload) => {
+      const run = async () => {
+        if (payload?.command === 'next') {
+          await nextRef.current();
+        } else if (payload?.command === 'previous') {
+          const result = await prevRef.current(audioRef.current.currentTime || 0);
+          if (result.restart) {
+            audioRef.current.seekTo(0);
+            audioRef.current.play();
+          }
+        }
+      };
+      run().catch((err) => console.warn('Remote next/previous failed:', err));
     });
     return () => subscription.remove();
   }, [audio]);
