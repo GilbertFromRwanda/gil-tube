@@ -130,18 +130,39 @@ export function PlayerHost() {
         player.play();
       },
       stopAudio: () => {
+        // Each native call is isolated: this runs when the app returns to the
+        // screen, and one failing must not stop the rest (or crash the app).
         const player = audioRef.current;
-        const seconds = player.currentTime;
-        const wasPlaying = player.playing;
-        player.pause();
-        if (!IS_EXPO_GO) player.clearLockScreenControls();
-        // Drop the stream so it stops buffering.
-        player.replace(null);
+        let seconds = NaN;
+        let wasPlaying = true;
+        try {
+          seconds = player.currentTime;
+          wasPlaying = player.playing;
+        } catch (err) {
+          console.warn('Could not read the audio position:', err);
+        }
+        try {
+          player.pause();
+        } catch (err) {
+          console.warn('Could not pause the audio:', err);
+        }
+        try {
+          // Deactivate (not just clear): this also resets the player's own
+          // "active for lock screen" flag, which clearLockScreenControls()
+          // leaves set. The old source stays loaded until the next handoff
+          // replaces it - replace(null) is not valid, the native side takes a
+          // non-null source and the call threw.
+          if (!IS_EXPO_GO) player.setActiveForLockScreen(false);
+        } catch (err) {
+          console.warn('Could not release the lock-screen controls:', err);
+        }
         return { seconds, wasPlaying };
       },
       resumeVideo: (seconds, wasPlaying) => {
-        ytRef.current?.seekTo(seconds, true);
-        lastVideoTime.current = { seconds, at: Date.now() };
+        if (Number.isFinite(seconds)) {
+          ytRef.current?.seekTo(seconds, true);
+          lastVideoTime.current = { seconds, at: Date.now() };
+        }
         if (wasPlaying) lastPlayingAt.current = Date.now();
         setPlaying(wasPlaying);
       },
@@ -151,7 +172,16 @@ export function PlayerHost() {
 
   useEffect(() => {
     if (!current) return;
-    const sub = AppState.addEventListener('change', (state) => handoffRef.current?.handleAppState(state));
+    const sub = AppState.addEventListener('change', (state) => {
+      // The handoff contains its own failures; this is the last line of
+      // defence, because an error thrown from here is uncaught and closes a
+      // release build of the app.
+      try {
+        handoffRef.current?.handleAppState(state);
+      } catch (err) {
+        console.warn('Background audio handoff failed:', err);
+      }
+    });
     return () => sub.remove();
   }, [current]);
 
@@ -179,7 +209,7 @@ export function PlayerHost() {
     const player = audioRef.current;
     try {
       player.pause();
-      if (!IS_EXPO_GO) player.clearLockScreenControls();
+      if (!IS_EXPO_GO) player.setActiveForLockScreen(false);
     } catch {
       // Nothing was playing.
     }
