@@ -36,3 +36,6 @@ postgres_data/
 
 # Stray Windows redirect artifact
 /nul
+
+# Built Android APK served by the web UI (see publish-apk.sh)
+web/app/
