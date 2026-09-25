@@ -620,6 +620,30 @@
         color: var(--muted);
         font-size: 0.88rem;
       }
+      .transport-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 0.9rem;
+        flex-wrap: wrap;
+      }
+      .transport-row button {
+        padding: 0.45rem 0.9rem;
+        font-size: 1rem;
+        line-height: 1;
+      }
+      .transport-row button.secondary:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
+      .autoplay-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        margin-left: 4px;
+        color: var(--muted);
+        font-size: 0.85rem;
+        cursor: pointer;
+        user-select: none;
+      }
+      .autoplay-toggle input { accent-color: var(--primary); cursor: pointer; }
       .format-row {
         display: flex;
         gap: 10px;
@@ -816,6 +840,14 @@
                 <div class="preview-meta">
                   <h2 id="previewTitle"></h2>
                   <p id="previewSub"></p>
+                </div>
+                <div class="transport-row">
+                  <button id="prevButton" class="secondary" type="button" title="Previous video" aria-label="Previous video" disabled>⏮</button>
+                  <button id="nextButton" class="secondary" type="button" title="Next video" aria-label="Next video" disabled>⏭</button>
+                  <label class="autoplay-toggle" title="Play the next video when this one ends">
+                    <input id="autoplayToggle" type="checkbox" checked />
+                    <span>Autoplay next</span>
+                  </label>
                 </div>
                 <div class="format-row">
                   <select id="formatSelect"></select>
@@ -1162,6 +1194,9 @@
       const previewEmbed = document.getElementById('previewEmbed');
       const previewIframe = document.getElementById('previewIframe');
       const previewLoading = document.getElementById('previewLoading');
+      const prevButton = document.getElementById('prevButton');
+      const nextButton = document.getElementById('nextButton');
+      const autoplayToggle = document.getElementById('autoplayToggle');
       const previewTitle = document.getElementById('previewTitle');
       const previewSub = document.getElementById('previewSub');
       const formatSelect = document.getElementById('formatSelect');
@@ -1276,6 +1311,8 @@
               // video is showing, so the cover can go.
               onStateChange: (event) => {
                 if (event.data === 3 || event.data === 1 || event.data === 5) hideLoadingCover();
+                // 0 = ended: carry on with the next video in the list.
+                if (event.data === 0) handleVideoEnded();
               },
               onError: hideLoadingCover,
             },
@@ -1746,6 +1783,7 @@
         searchResults.classList.remove('hidden');
         searchResults.querySelectorAll('.result-card').forEach(wireResultCard);
         prewarmTopResults(results);
+        updateQueueButtons();
       }
 
       // Full extraction (needed to actually download) is the slow part -
@@ -1790,7 +1828,127 @@
         for (let i = startIndex; i < cards.length; i++) {
           wireResultCard(cards[i]);
         }
+        updateQueueButtons();
       }
+
+      // ---- Play queue: next / previous / autoplay
+      // The queue is the list of results the playing video came from, and it
+      // grows as the endless feed loads more. If a different search replaces
+      // the list while a video plays, the queue keeps the list playback
+      // started from (so Next doesn't jump into unrelated results).
+      const AUTOPLAY_KEY = 'gil_tube_autoplay';
+      const RESTART_AFTER_SECONDS = 3;
+      let autoplayOn = true;
+      try {
+        autoplayOn = localStorage.getItem(AUTOPLAY_KEY) !== '0';
+      } catch (err) {
+        // Storage blocked: autoplay stays on for this visit.
+      }
+      let playingId = null;
+      let queueList = [];
+      let endedFor = null;
+
+      function syncQueue() {
+        if (playingId && currentResultsList.some((r) => r.id === playingId)) queueList = currentResultsList;
+      }
+
+      function queueIndex() {
+        syncQueue();
+        return playingId ? queueList.findIndex((r) => r.id === playingId) : -1;
+      }
+
+      // The queue is still the live list, so the feed may have more of it.
+      function queueCanGrow() {
+        return queueList === currentResultsList && feedHasMore();
+      }
+
+      function canGoPrev() {
+        return queueIndex() > 0;
+      }
+
+      function canGoNext() {
+        const index = queueIndex();
+        if (index < 0) return false;
+        return index + 1 < queueList.length || queueCanGrow();
+      }
+
+      function updateQueueButtons() {
+        prevButton.disabled = !canGoPrev();
+        nextButton.disabled = !canGoNext();
+      }
+
+      // A scroll-triggered load may already be running: wait for it rather
+      // than giving up because loadMoreFeed() returns at once in that case.
+      async function waitForFeedIdle() {
+        for (let i = 0; i < 300 && loadingMoreFeed; i += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+      }
+
+      function playQueued(result) {
+        if (!result || !result.url) return false;
+        selectSearchResult(result);
+        return true;
+      }
+
+      async function playNext() {
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          const index = queueIndex();
+          if (index < 0) return false;
+          if (index + 1 < queueList.length) return playQueued(queueList[index + 1]);
+          if (!queueCanGrow()) return false;
+          const startedWith = playingId;
+          if (loadingMoreFeed) await waitForFeedIdle();
+          else await loadMoreFeed();
+          if (playingId !== startedWith) return false; // the user picked something else meanwhile
+        }
+        return false;
+      }
+
+      // Past a few seconds in, "previous" restarts the video (like every media
+      // player); otherwise it goes back one. Returns true if it moved.
+      function playPrev(positionSeconds) {
+        const index = queueIndex();
+        if (positionSeconds > RESTART_AFTER_SECONDS || index <= 0) {
+          if (ytPlayerReady && ytPlayer && typeof ytPlayer.seekTo === 'function') {
+            ytPlayer.seekTo(0, true);
+            if (typeof ytPlayer.playVideo === 'function') ytPlayer.playVideo();
+          }
+          return false;
+        }
+        return playQueued(queueList[index - 1]);
+      }
+
+      function currentPlayerSeconds() {
+        try {
+          if (ytPlayerReady && ytPlayer && typeof ytPlayer.getCurrentTime === 'function') {
+            const seconds = ytPlayer.getCurrentTime();
+            if (Number.isFinite(seconds)) return seconds;
+          }
+        } catch (err) {
+          // Treated as the start of the video.
+        }
+        return 0;
+      }
+
+      function handleVideoEnded() {
+        if (!autoplayOn || !playingId || endedFor === playingId) return;
+        endedFor = playingId; // one 'ended' must not skip twice
+        playNext();
+      }
+
+      prevButton.addEventListener('click', () => playPrev(currentPlayerSeconds()));
+      nextButton.addEventListener('click', () => playNext());
+      autoplayToggle.checked = autoplayOn;
+      autoplayToggle.addEventListener('change', () => {
+        autoplayOn = autoplayToggle.checked;
+        try {
+          localStorage.setItem(AUTOPLAY_KEY, autoplayOn ? '1' : '0');
+        } catch (err) {
+          // Not remembered next visit; still applies now.
+        }
+      });
+      // ---- end play queue
 
       // Search results already carry title/thumbnail/uploader/duration, so
       // clicking one shows the preview instantly instead of re-fetching and
@@ -1800,11 +1958,14 @@
       // the background while the rest of the preview is already visible.
       async function selectSearchResult(result) {
         clearError();
+        playingId = result.id || null;
+        endedFor = null;
         currentURL = result.url;
         urlInput.value = result.url;
         jobCard.classList.add('hidden');
 
         renderPreviewShell(result);
+        updateQueueButtons();
         formatSelect.innerHTML = '<option>Loading formats…</option>';
         formatSelect.disabled = true;
         downloadButton.disabled = true;
@@ -1839,6 +2000,8 @@
         clearError();
         previewCard.classList.add('hidden');
         jobCard.classList.add('hidden');
+        playingId = null; // a pasted link isn't in any list, so no next / previous
+        updateQueueButtons();
 
         const url = urlInput.value.trim();
         if (!url) return;

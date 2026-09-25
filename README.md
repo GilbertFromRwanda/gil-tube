@@ -97,6 +97,20 @@ and relevance fades. Both clients drop repeats, prefetch the next page and show
 placeholder tiles while it loads. Tests: `node scripts/test-web-feed.mjs` (web),
 `npm run test:feed` in `mobile/`, plus the extractor and API suites.
 
+## Autoplay, next and previous
+
+Playing a video makes the list it came from a queue. **Next** / **Previous**
+(⏭ ⏮) step through it and, at the end of what is loaded, pull in more of the
+endless feed; when a video ends, **Autoplay** (on by default, remembered) starts
+the next. Previous restarts the video if you are more than 3 s in, like any
+player. Searching for something else while a video plays doesn't change what
+Next does: it carries on with the list you started from. The phone app also has
+an **Audio only** switch: it plays the audio stream (`/api/v1/audio`) instead of
+the video, keeps going with the screen off, and moves through the queue when a
+track ends. The lock-screen buttons are play/pause and seek only (expo-audio
+does not offer next/previous there). Tests: `node scripts/test-web-queue.mjs`
+(web), `npm run test:queue` and `npm run test:handoff` in `mobile/`.
+
 ## Getting the mobile app onto a phone
 
 The web UI's 📱 button opens a two-step dialog: **1 · Install** shows a QR code

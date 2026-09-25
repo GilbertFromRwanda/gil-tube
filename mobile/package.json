@@ -36,7 +36,8 @@
     "web": "expo start --web",
     "test:handoff": "node scripts/test-handoff.mjs",
     "test:feed": "node scripts/test-feed.mjs",
-    "test": "npm run test:handoff && npm run test:feed"
+    "test": "npm run test:handoff && npm run test:feed && npm run test:queue",
+    "test:queue": "node scripts/test-queue.mjs"
   },
   "private": true
 }

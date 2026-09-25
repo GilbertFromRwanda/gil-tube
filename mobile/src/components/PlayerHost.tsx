@@ -53,7 +53,8 @@ export function PlayerHost() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const { width: W, height: H } = useWindowDimensions();
-  const { current, mode, setMode, close } = usePlayer();
+  const { current, mode, setMode, close, next, prev, canPrev, canNext, autoplay, setAutoplay, audioMode, setAudioMode } =
+    usePlayer();
   const { items, track } = useDownloads();
 
   // Geometry, all in px. The sheet is a fixed-height panel anchored to the
@@ -98,6 +99,21 @@ export function PlayerHost() {
   const lastVideoTime = useRef<{ seconds: number; at: number } | null>(null);
   const lastPlayingAt = useRef<number | null>(null);
   const handoffRef = useRef<Handoff | null>(null);
+  // Long-lived callbacks (the handoff, audio events) must see the latest values.
+  const nextRef = useRef(next);
+  nextRef.current = next;
+  const autoplayRef = useRef(autoplay);
+  autoplayRef.current = autoplay;
+  const setAudioModeRef = useRef(setAudioMode);
+  setAudioModeRef.current = setAudioMode;
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  // Lock-screen controls are switched on once per audio session, then only their
+  // text is updated as tracks change.
+  const lockScreenActive = useRef(false);
+  // The video whose end already triggered autoplay, so one 'ended' can't skip twice.
+  const endedFor = useRef<string | null>(null);
+  const [audioPlaying, setAudioPlaying] = useState(false);
 
   useEffect(() => {
     setAudioModeAsync({
@@ -121,11 +137,18 @@ export function PlayerHost() {
         player.replace({ uri: await getAudioStreamUrl(video.url) });
         await player.seekTo(fromSeconds);
         if (!IS_EXPO_GO) {
-          player.setActiveForLockScreen(true, {
+          const metadata = {
             title: video.title,
             artist: video.uploader ?? undefined,
             artworkUrl: video.thumbnail ?? undefined,
-          });
+          };
+          if (lockScreenActive.current) {
+            // Already showing controls: just change the track's text.
+            player.updateLockScreenMetadata(metadata);
+          } else {
+            player.setActiveForLockScreen(true, metadata);
+            lockScreenActive.current = true;
+          }
         }
         player.play();
       },
@@ -152,10 +175,11 @@ export function PlayerHost() {
           // leaves set. The old source stays loaded until the next handoff
           // replaces it - replace(null) is not valid, the native side takes a
           // non-null source and the call threw.
-          if (!IS_EXPO_GO) player.setActiveForLockScreen(false);
+          if (!IS_EXPO_GO && lockScreenActive.current) player.setActiveForLockScreen(false);
         } catch (err) {
           console.warn('Could not release the lock-screen controls:', err);
         }
+        lockScreenActive.current = false;
         return { seconds, wasPlaying };
       },
       resumeVideo: (seconds, wasPlaying) => {
@@ -166,9 +190,47 @@ export function PlayerHost() {
         if (wasPlaying) lastPlayingAt.current = Date.now();
         setPlaying(wasPlaying);
       },
+      // The audio track ended: autoplay moves to the next video (which the
+      // handoff then follows with audio). With autoplay off, or nothing next,
+      // it simply stops.
+      advanceAudio: async () => (autoplayRef.current ? nextRef.current() : false),
+      // Audio mode was switched on but couldn't start: flip the switch back.
+      onExplicitFailed: () => {
+        setAudioModeRef.current(false);
+        setError('Could not start audio. Check the server address and connection.');
+      },
       onError: (err) => console.warn('Background audio could not start:', err),
     });
   }
+
+  // Audio progress: keeps the play/pause icon honest in audio mode and reports
+  // the end of a track, which is what drives autoplay when the app is in the
+  // background (the video player can't tell us anything then).
+  useEffect(() => {
+    const player = audioRef.current;
+    const subscription = player.addListener('playbackStatusUpdate', (status) => {
+      try {
+        setAudioPlaying(status.playing);
+        if (status.didJustFinish) handoffRef.current?.handleAudioEnded();
+      } catch (err) {
+        console.warn('Audio status handler failed:', err);
+      }
+    });
+    return () => subscription.remove();
+  }, [audio]);
+
+  // Audio mode: the user chose to listen instead of watch.
+  const hasCurrent = !!current;
+  useEffect(() => {
+    const handoff = handoffRef.current;
+    if (!handoff || !hasCurrent) return;
+    try {
+      if (audioMode) handoff.enterAudioMode();
+      else handoff.exitAudioMode();
+    } catch (err) {
+      console.warn('Switching audio mode failed:', err);
+    }
+  }, [audioMode, hasCurrent]);
 
   useEffect(() => {
     if (!current) return;
@@ -206,13 +268,21 @@ export function PlayerHost() {
   // Closing the player must also silence any audio-only playback.
   useEffect(() => {
     if (current) return;
+    // Reset the handoff too, otherwise it would still think audio is running
+    // and ignore the next video that is opened.
+    try {
+      handoffRef.current?.exitAudioMode();
+    } catch {
+      // Best effort.
+    }
     const player = audioRef.current;
     try {
       player.pause();
-      if (!IS_EXPO_GO) player.setActiveForLockScreen(false);
+      if (!IS_EXPO_GO && lockScreenActive.current) player.setActiveForLockScreen(false);
     } catch {
       // Nothing was playing.
     }
+    lockScreenActive.current = false;
   }, [current]);
 
   const url = current?.url || '';
@@ -241,13 +311,32 @@ export function PlayerHost() {
     setError('');
     setSelectedFormat('');
     setStarting(false);
-    setPlaying(true);
     setJobId(null);
 
+    // Nothing carries over from the previous video: its position would be
+    // wrong for this one.
+    lastVideoTime.current = null;
+    lastPlayingAt.current = null;
+    endedFor.current = null;
+
+    // In audio mode (or a background handoff) the video stays paused and the
+    // audio follows to this video instead.
+    const handoff = handoffRef.current;
+    const audioOwned = !!handoff && (handoff.isAudioActive() || handoff.isExplicit());
+    setPlaying(!audioOwned);
+    if (audioOwned) {
+      try {
+        handoff?.handleVideoChanged();
+      } catch (err) {
+        console.warn('Following the new video with audio failed:', err);
+      }
+    }
+
     // Slides up from wherever the sheet is: below the screen on first open
-    // (it is always parked there while hidden), or from the mini bar when
-    // another video is opened from the list while one is minimised.
-    animateTo('expanded');
+    // (it is always parked there while hidden), from the mini bar when a video
+    // is opened from the list while one is minimised - and stays where it is
+    // when the video changed by itself (autoplay, next, previous).
+    animateTo(modeRef.current === 'mini' ? 'mini' : 'expanded');
 
     let cancelled = false;
     if (cachedInfo) return;
@@ -378,6 +467,61 @@ export function PlayerHost() {
     }
   };
 
+  // ---- Transport: previous / play-pause / next --------------------------------
+  const isPlayingNow = audioMode ? audioPlaying : playing;
+
+  const togglePlayPause = () => {
+    if (audioMode) {
+      try {
+        if (audio.playing) audio.pause();
+        else audio.play();
+      } catch (err) {
+        console.warn('Could not toggle the audio:', err);
+      }
+      return;
+    }
+    setPlaying((p) => !p);
+  };
+
+  // Where the current video is right now, in seconds.
+  const currentPosition = async (): Promise<number> => {
+    try {
+      if (audioMode) return audio.currentTime || 0;
+      const seconds = await ytRef.current?.getCurrentTime();
+      if (typeof seconds === 'number' && Number.isFinite(seconds)) return seconds;
+    } catch {
+      // Fall back to the last position noted while it was playing.
+    }
+    return lastVideoTime.current?.seconds ?? 0;
+  };
+
+  const restartCurrent = () => {
+    try {
+      if (audioMode) {
+        audio.seekTo(0);
+        audio.play();
+      } else {
+        ytRef.current?.seekTo(0, true);
+        setPlaying(true);
+      }
+    } catch (err) {
+      console.warn('Could not restart:', err);
+    }
+  };
+
+  const goNext = () => {
+    next().catch((err) => console.warn('Next failed:', err));
+  };
+
+  const goPrev = async () => {
+    try {
+      const result = await prev(await currentPosition());
+      if (result.restart) restartCurrent();
+    } catch (err) {
+      console.warn('Previous failed:', err);
+    }
+  };
+
   const clamp = { extrapolate: 'clamp' as const };
   const backdropOpacity = y.interpolate({ inputRange: [0, miniY], outputRange: [1, 0], ...clamp });
   const expandedOpacity = y.interpolate({ inputRange: [0, miniY * 0.5], outputRange: [1, 0], ...clamp });
@@ -434,6 +578,53 @@ export function PlayerHost() {
             showsVerticalScrollIndicator={false}
             bounces={false}
           >
+            <View style={styles.transport}>
+              <Pressable
+                onPress={goPrev}
+                style={[styles.transportButton, { backgroundColor: colors.panelAlt, borderColor: colors.border, opacity: canPrev ? 1 : 0.6 }]}
+                accessibilityLabel="Previous video"
+              >
+                <Text style={[styles.transportGlyph, { color: colors.text }]}>⏮</Text>
+              </Pressable>
+              <Pressable
+                onPress={togglePlayPause}
+                style={[styles.transportButton, styles.transportMain, { backgroundColor: colors.primary, borderColor: colors.primary }]}
+                accessibilityLabel={isPlayingNow ? 'Pause' : 'Play'}
+              >
+                <Text style={[styles.transportGlyph, { color: '#04121f' }]}>{isPlayingNow ? '❚❚' : '▶'}</Text>
+              </Pressable>
+              <Pressable
+                onPress={goNext}
+                disabled={!canNext}
+                style={[styles.transportButton, { backgroundColor: colors.panelAlt, borderColor: colors.border, opacity: canNext ? 1 : 0.35 }]}
+                accessibilityLabel="Next video"
+              >
+                <Text style={[styles.transportGlyph, { color: colors.text }]}>⏭</Text>
+              </Pressable>
+            </View>
+            <View style={styles.chips}>
+              <Pressable
+                onPress={() => setAudioMode(!audioMode)}
+                style={[styles.chip, { borderColor: audioMode ? colors.primary : colors.border, backgroundColor: audioMode ? colors.panelAlt : colors.panel }]}
+                accessibilityRole="switch"
+                accessibilityState={{ checked: audioMode }}
+              >
+                <Text style={{ color: audioMode ? colors.primary : colors.muted, fontSize: 12, fontWeight: '600' }}>
+                  🎧 Audio only {audioMode ? '· on' : ''}
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={() => setAutoplay(!autoplay)}
+                style={[styles.chip, { borderColor: autoplay ? colors.primary : colors.border, backgroundColor: autoplay ? colors.panelAlt : colors.panel }]}
+                accessibilityRole="switch"
+                accessibilityState={{ checked: autoplay }}
+              >
+                <Text style={{ color: autoplay ? colors.primary : colors.muted, fontSize: 12, fontWeight: '600' }}>
+                  ⏭ Autoplay {autoplay ? '· on' : '· off'}
+                </Text>
+              </Pressable>
+            </View>
+
             <Text style={[styles.title, { color: colors.text }]}>{title}</Text>
             {metaParts.length > 0 ? (
               <Text style={[styles.meta, { color: colors.muted }]}>{metaParts.join(' · ')}</Text>
@@ -510,6 +701,11 @@ export function PlayerHost() {
               onReady={() => setPlayerReady(true)}
               onChangeState={(state: string) => {
                 if (state === 'paused' || state === 'ended') setPlaying(false);
+                if (state === 'ended' && autoplayRef.current && !audioMode && endedFor.current !== current.id) {
+                  // The video finished: carry on with the next one in the list.
+                  endedFor.current = current.id;
+                  nextRef.current().catch((err) => console.warn('Autoplay failed:', err));
+                }
                 if (state === 'playing') {
                   setPlaying(true);
                   lastPlayingAt.current = Date.now();
@@ -521,6 +717,16 @@ export function PlayerHost() {
                 if (state === 'buffering' || state === 'playing' || state === 'video cued') setPlayerReady(true);
               }}
             />
+            {audioMode ? (
+              <View style={styles.audioOverlay} pointerEvents="none">
+                {current.thumbnail ? (
+                  <Image source={{ uri: current.thumbnail }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+                ) : null}
+                <View style={styles.audioOverlayShade}>
+                  <Text style={styles.audioOverlayText}>🎧 Audio only</Text>
+                </View>
+              </View>
+            ) : null}
             {/* Cover until ready: the thumbnail from the results grid plus a
                 spinner, so the box is never empty while the embed loads. */}
             {!playerReady ? (
@@ -545,7 +751,7 @@ export function PlayerHost() {
           pointerEvents={isMini ? 'auto' : 'none'}
           style={[styles.miniBar, { height: MINI_H, opacity: miniOpacity }]}
         >
-          <View style={[styles.miniText, { left: miniTextLeft, right: 96 }]}>
+          <View style={[styles.miniText, { left: miniTextLeft, right: 140 }]}>
             <Text style={[styles.miniTitle, { color: colors.text }]} numberOfLines={2}>
               {title}
             </Text>
@@ -556,12 +762,21 @@ export function PlayerHost() {
             ) : null}
           </View>
           <Pressable
-            onPress={() => setPlaying((p) => !p)}
+            onPress={goNext}
+            disabled={!canNext}
+            hitSlop={8}
+            style={[styles.miniButton, { right: 96, opacity: canNext ? 1 : 0.35 }]}
+            accessibilityLabel="Next video"
+          >
+            <Text style={{ color: colors.text, fontSize: 18 }}>⏭</Text>
+          </Pressable>
+          <Pressable
+            onPress={togglePlayPause}
             hitSlop={8}
             style={[styles.miniButton, { right: 52 }]}
-            accessibilityLabel={playing ? 'Pause' : 'Play'}
+            accessibilityLabel={isPlayingNow ? 'Pause' : 'Play'}
           >
-            <Text style={{ color: colors.text, fontSize: 20 }}>{playing ? '❚❚' : '▶'}</Text>
+            <Text style={{ color: colors.text, fontSize: 20 }}>{isPlayingNow ? '❚❚' : '▶'}</Text>
           </Pressable>
           <Pressable onPress={stopAndClose} hitSlop={8} style={[styles.miniButton, { right: 8 }]} accessibilityLabel="Stop and close">
             <Text style={{ color: colors.muted, fontSize: 18 }}>✕</Text>
@@ -625,6 +840,31 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: 'rgba(0,0,0,0.35)',
   },
+  transport: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 14, marginBottom: 12 },
+  transportButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  transportMain: { width: 60, height: 60, borderRadius: 30 },
+  transportGlyph: { fontSize: 20 },
+  chips: { flexDirection: 'row', gap: 8, justifyContent: 'center', marginBottom: 14 },
+  chip: { borderWidth: 1, borderRadius: 999, paddingVertical: 7, paddingHorizontal: 12 },
+  audioOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000' },
+  audioOverlayShade: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  audioOverlayText: { color: '#fff', fontSize: 15, fontWeight: '700' },
   miniBar: { position: 'absolute', top: 0, left: 0, right: 0 },
   miniText: { position: 'absolute', top: 0, bottom: 0, justifyContent: 'center' },
   miniTitle: { fontSize: 14, fontWeight: '600', lineHeight: 18 },

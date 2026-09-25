@@ -63,6 +63,14 @@ The address is saved locally (AsyncStorage) and reused on future launches.
   app-state listener would close a release build). Run them with
   `npm run test:handoff`. Needs a real build - the background-audio
   config (iOS audio mode, Android media foreground service) isn't in Expo Go.
+- `src/player/queue.ts` + `PlayerContext` — **next / previous / autoplay.** The
+  search feed registers itself as the queue source; `PlayQueue` walks the list
+  playback started from (keeping it if you search something else meanwhile),
+  asks the feed for more at the end, and treats Previous after 3 s as
+  "restart". `handoff.ts` also has an explicit **audio mode** (the 🎧 switch in
+  the sheet): audio stays on whatever the app is doing, follows the queue when
+  a track ends, and falls back to video if it can't start. Tests:
+  `npm run test:queue`, `npm run test:handoff`; `npm test` runs all three.
 - `src/downloads/DownloadsContext.tsx` — app-level store of download jobs
   with one shared poller (job + progress once a second, stopped when
   nothing is running), so progress survives closing the preview sheet.
