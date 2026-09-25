@@ -10,6 +10,7 @@ import { useTheme } from '../theme/theme';
 import { openSavedFile } from '../storage/openFile';
 import { DEFAULT_FOLDER_NAME, folderLabel, placeFileInFolder, resolveSaveFolder, SaveCancelledError } from '../storage/saveLocation';
 import { formatBytes } from '../utils/format';
+import { createTransferTracker, TransferSample } from '../utils/transferProgress';
 import { ProgressBar } from './ProgressBar';
 import { SegmentBars } from './SegmentBars';
 
@@ -42,6 +43,9 @@ export function DownloadPanel({
   const [saveError, setSaveError] = useState('');
   const [savedTo, setSavedTo] = useState('');
   const [savedUri, setSavedUri] = useState('');
+  // What the save is doing right now, so it can show a bar and speed like the
+  // download does instead of a bare "Saving…" that looks frozen.
+  const [saveProgress, setSaveProgress] = useState<{ phase: 'download' | 'copy'; sample: TransferSample | null } | null>(null);
 
   const { jobId, title, container, job, progress } = item;
   const displayStatus = displayStatusOf(item);
@@ -68,9 +72,22 @@ export function DownloadPanel({
       const ext = container || 'bin';
       const baseName = (title || jobId).replace(/[\/:*?"<>|]/g, '_');
       const cachedUri = `${FileSystem.cacheDirectory}${baseName}.${ext}`;
-      const { uri } = await FileSystem.downloadAsync(fileUrl, cachedUri);
+      const tracker = createTransferTracker();
+      setSaveProgress({ phase: 'download', sample: null });
+      const resumable = FileSystem.createDownloadResumable(fileUrl, cachedUri, {}, (p) => {
+        const sample = tracker(p.totalBytesWritten, p.totalBytesExpectedToWrite);
+        if (sample) setSaveProgress({ phase: 'download', sample });
+      });
+      const result = await resumable.downloadAsync();
+      if (!result) throw new Error('The transfer was interrupted.');
+      // The download call doesn't fail on an HTTP error; without this the
+      // server's error message would be written out as if it were the video.
+      if (result.status >= 400) throw new Error(`The server refused the file (HTTP ${result.status}).`);
 
-      setSavedUri(await placeFileInFolder(uri, folder, baseName, ext));
+      // Second phase: moving it into the chosen folder. That copy has no byte
+      // callbacks, so it is shown as an indeterminate step.
+      setSaveProgress({ phase: 'copy', sample: null });
+      setSavedUri(await placeFileInFolder(result.uri, folder, baseName, ext));
       setSavedTo(folder.uri.includes('/tree/') ? folderLabel(folder.uri) : `${DEFAULT_FOLDER_NAME} folder in Files`);
       setSaveState('saved');
     } catch (err) {
@@ -80,6 +97,8 @@ export function DownloadPanel({
       }
       setSaveState('error');
       setSaveError(err instanceof Error ? err.message : 'Could not save the file.');
+    } finally {
+      setSaveProgress(null);
     }
   };
 
@@ -156,9 +175,40 @@ export function DownloadPanel({
             style={[styles.saveButton, { backgroundColor: colors.success, opacity: saveState === 'saving' ? 0.7 : 1 }]}
           >
             <Text style={styles.saveButtonText}>
-              {saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? 'Save again' : 'Save file'}
+              {saveState === 'saving'
+                ? saveProgress?.phase === 'copy'
+                  ? 'Copying…'
+                  : saveProgress?.sample
+                    ? `Saving… ${Math.floor(saveProgress.sample.percent)}%`
+                    : 'Saving…'
+                : saveState === 'saved'
+                  ? 'Save again'
+                  : 'Save file'}
             </Text>
           </Pressable>
+          {saveState === 'saving' && saveProgress ? (
+            <View style={styles.saveProgress}>
+              <ProgressBar
+                percent={saveProgress.sample?.percent ?? 0}
+                colors={colors}
+                indeterminate={saveProgress.phase === 'copy' || !saveProgress.sample}
+              />
+              <View style={styles.progressMetaRow}>
+                <Text style={[styles.progressMeta, { color: colors.muted }]}>
+                  {saveProgress.phase === 'copy'
+                    ? 'Copying into your folder…'
+                    : saveProgress.sample
+                      ? `${formatBytes(saveProgress.sample.written)} / ${formatBytes(saveProgress.sample.total)}`
+                      : 'Starting…'}
+                </Text>
+                <Text style={[styles.progressMeta, { color: colors.muted }]}>
+                  {saveProgress.phase === 'download' && saveProgress.sample && saveProgress.sample.speed > 0
+                    ? `${formatBytes(saveProgress.sample.speed)}/s`
+                    : ''}
+                </Text>
+              </View>
+            </View>
+          ) : null}
           {saveState === 'saved' ? (
             <View style={styles.savedRow}>
               <Text style={[styles.savedText, { color: colors.success }]} numberOfLines={2}>
@@ -192,6 +242,7 @@ const styles = StyleSheet.create({
   progressBlock: { marginTop: 12 },
   progressMetaRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 },
   progressMeta: { fontSize: 12 },
+  saveProgress: { marginTop: 10 },
   saveButton: { marginTop: 14, borderRadius: 10, paddingVertical: 12, alignItems: 'center' },
   saveButtonText: { color: '#04121f', fontWeight: '700', fontSize: 15 },
   errorText: { marginTop: 12, fontSize: 13 },
