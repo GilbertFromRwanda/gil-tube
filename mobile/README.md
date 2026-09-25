@@ -52,7 +52,9 @@ The address is saved locally (AsyncStorage) and reused on future launches.
   from the same second with lock-screen/notification controls; returning to
   the app hands it back to the video where the audio got to. The decision
   logic is pure and unit-tested (timing races such as the embed pausing just
-  before the app backgrounds). Needs a real build - the background-audio
+  before the app backgrounds, and any step failing - an uncaught error in the
+  app-state listener would close a release build). Run them with
+  `npm run test:handoff`. Needs a real build - the background-audio
   config (iOS audio mode, Android media foreground service) isn't in Expo Go.
 - `src/downloads/DownloadsContext.tsx` — app-level store of download jobs
   with one shared poller (job + progress once a second, stopped when

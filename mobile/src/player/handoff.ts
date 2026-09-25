@@ -17,7 +17,8 @@ export interface HandoffDeps {
   lastPlayingAt: () => number | null;
   // Begin audio-only playback from this position. May reject (no network...).
   startAudio: (fromSeconds: number) => Promise<void>;
-  // Stop audio-only playback and report where it got to.
+  // Stop audio-only playback and report where it got to. `seconds` may be NaN
+  // if the position couldn't be read.
   stopAudio: () => { seconds: number; wasPlaying: boolean };
   // Bring the video back at this position, playing or paused.
   resumeVideo: (seconds: number, playing: boolean) => void;
@@ -41,6 +42,22 @@ export function createHandoff(deps: HandoffDeps): Handoff {
   // otherwise it would play over the video.
   let starting = false;
   let returnedWhileStarting = false;
+  // Where and when audio started, to estimate the position if the audio engine
+  // can't be asked for it when the app returns.
+  let audioFrom = 0;
+  let audioStartedAt = 0;
+
+  // These run from an app-state event with nothing above them to catch an
+  // error, and an uncaught one closes the app. The handoff is a nicety, so a
+  // failing step is reported and skipped rather than allowed to take the app
+  // down.
+  function attempt(step: () => void) {
+    try {
+      step();
+    } catch (err) {
+      deps.onError?.(err);
+    }
+  }
 
   function toBackground() {
     if (audioActive || starting) return;
@@ -57,11 +74,19 @@ export function createHandoff(deps: HandoffDeps): Handoff {
 
     starting = true;
     returnedWhileStarting = false;
-    deps.pauseVideo();
-    deps
-      .startAudio(from)
+    attempt(() => deps.pauseVideo());
+    // startAudio may throw synchronously as well as reject.
+    new Promise<void>((resolve, reject) => {
+      try {
+        deps.startAudio(from).then(resolve, reject);
+      } catch (err) {
+        reject(err);
+      }
+    })
       .then(() => {
         audioActive = true;
+        audioFrom = from;
+        audioStartedAt = deps.now();
         if (returnedWhileStarting) {
           returnedWhileStarting = false;
           toForeground();
@@ -83,8 +108,20 @@ export function createHandoff(deps: HandoffDeps): Handoff {
     }
     if (!audioActive) return;
     audioActive = false;
-    const { seconds, wasPlaying } = deps.stopAudio();
-    deps.resumeVideo(seconds, wasPlaying);
+
+    let seconds = NaN;
+    let wasPlaying = true;
+    attempt(() => {
+      const stopped = deps.stopAudio();
+      seconds = stopped.seconds;
+      wasPlaying = stopped.wasPlaying;
+    });
+    // If the position couldn't be read, assume it played on from where it
+    // started rather than snapping the video somewhere wrong.
+    if (!Number.isFinite(seconds)) {
+      seconds = audioFrom + Math.max(0, (deps.now() - audioStartedAt) / 1000);
+    }
+    attempt(() => deps.resumeVideo(seconds, wasPlaying));
   }
 
   return {
