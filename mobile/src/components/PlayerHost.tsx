@@ -1,5 +1,6 @@
 import { Picker } from '@react-native-picker/picker';
 import { setAudioModeAsync, useAudioPlayer } from 'expo-audio';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -28,6 +29,11 @@ import { useTheme } from '../theme/theme';
 import { formatDuration, formatLabel } from '../utils/format';
 import { DownloadPanel } from './DownloadPanel';
 import { SkeletonBlock } from './SkeletonBlock';
+
+// Expo Go doesn't ship the audio library's Android media service (it needs the
+// config plugin, i.e. a real build), so lock-screen controls can't be attached
+// there - trying only logs errors. Audio still plays; it just has no controls.
+const IS_EXPO_GO = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
 
 const SLIDE_MS = 280;
 const HANDLE_H = 28;
@@ -114,11 +120,13 @@ export function PlayerHost() {
         const player = audioRef.current;
         player.replace({ uri: await getAudioStreamUrl(video.url) });
         await player.seekTo(fromSeconds);
-        player.setActiveForLockScreen(true, {
-          title: video.title,
-          artist: video.uploader ?? undefined,
-          artworkUrl: video.thumbnail ?? undefined,
-        });
+        if (!IS_EXPO_GO) {
+          player.setActiveForLockScreen(true, {
+            title: video.title,
+            artist: video.uploader ?? undefined,
+            artworkUrl: video.thumbnail ?? undefined,
+          });
+        }
         player.play();
       },
       stopAudio: () => {
@@ -126,7 +134,7 @@ export function PlayerHost() {
         const seconds = player.currentTime;
         const wasPlaying = player.playing;
         player.pause();
-        player.clearLockScreenControls();
+        if (!IS_EXPO_GO) player.clearLockScreenControls();
         // Drop the stream so it stops buffering.
         player.replace(null);
         return { seconds, wasPlaying };
@@ -171,7 +179,7 @@ export function PlayerHost() {
     const player = audioRef.current;
     try {
       player.pause();
-      player.clearLockScreenControls();
+      if (!IS_EXPO_GO) player.clearLockScreenControls();
     } catch {
       // Nothing was playing.
     }

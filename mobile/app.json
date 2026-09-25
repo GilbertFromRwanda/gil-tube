@@ -24,8 +24,7 @@
       "predictiveBackGestureEnabled": false,
       "package": "com.giltube.app",
       "permissions": [
-        "android.permission.CAMERA",
-        "android.permission.RECORD_AUDIO"
+        "android.permission.CAMERA"
       ]
     },
     "web": {
@@ -36,7 +35,8 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Gil Tube uses the camera to scan the QR code shown by the web UI, so it can find your API server without typing an address."
+          "cameraPermission": "Gil Tube uses the camera to scan the QR code shown by the web UI, so it can find your API server without typing an address.",
+          "recordAudioAndroid": false
         }
       ],
       [
