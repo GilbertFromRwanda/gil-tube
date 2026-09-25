@@ -168,7 +168,7 @@
         cursor: pointer;
       }
       .modal-tab.active { background: var(--panel); color: var(--text); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18); }
-      .modal-panel.hidden { display: none; }
+      .modal-panel.hidden, .modal-older.hidden { display: none; }
       .modal-download {
         display: block;
         margin: 0 0 0.9rem;
@@ -182,6 +182,19 @@
       }
       .modal-download small { display: block; font-weight: 500; opacity: 0.75; margin-top: 2px; }
       .modal-download[aria-disabled="true"] { opacity: 0.45; pointer-events: none; }
+      .modal-older { margin: 0.9rem 0 0; text-align: left; font-size: 0.78rem; color: var(--muted); }
+      .modal-older summary { cursor: pointer; text-align: center; }
+      .modal-older ul { list-style: none; margin: 0.5rem 0 0; padding: 0; display: grid; gap: 6px; }
+      .modal-older a {
+        display: block;
+        padding: 0.4rem 0.6rem;
+        border-radius: 8px;
+        background: var(--panel-alt);
+        border: 1px solid var(--border);
+        color: var(--text);
+        text-decoration: none;
+      }
+      .modal-older a small { display: block; color: var(--muted); }
       .topbar {
         position: sticky;
         top: 0;
@@ -733,12 +746,16 @@
         <div id="panelInstall" class="modal-panel">
           <p id="installHint" class="modal-hint"></p>
           <div id="installQr" class="modal-qr"></div>
-          <a id="installLink" class="modal-download" href="app/GilTube.apk" download="GilTube.apk">
+          <a id="installLink" class="modal-download" href="#" aria-disabled="true">
             ⬇ Download the Android app (APK)<small id="installMeta"></small>
           </a>
           <p class="modal-url-label">Download address</p>
           <input id="installUrl" class="modal-url" type="text" autocomplete="off" spellcheck="false" />
           <p id="installStatus" class="modal-edit-hint"></p>
+          <details id="installOlder" class="modal-older hidden">
+            <summary id="installOlderSummary">Older builds</summary>
+            <ul id="installOlderList"></ul>
+          </details>
         </div>
 
         <div id="panelConnect" class="modal-panel hidden">
@@ -849,6 +866,9 @@
       const installMeta = document.getElementById('installMeta');
       const installUrl = document.getElementById('installUrl');
       const installStatus = document.getElementById('installStatus');
+      const installOlder = document.getElementById('installOlder');
+      const installOlderSummary = document.getElementById('installOlderSummary');
+      const installOlderList = document.getElementById('installOlderList');
       const searchForm = document.getElementById('searchForm');
       const searchInput = document.getElementById('searchInput');
       const searchSuggestions = document.getElementById('searchSuggestions');
@@ -949,45 +969,85 @@
       // ---- Install tab: the APK is served by this same web server (see
       // publish-apk.sh), so a phone on the same network can fetch it by link
       // or QR code without any internet or store.
-      const APK_PATH = 'app/GilTube.apk';
+      // publish-apk.sh writes app/versions.json (newest build first) next to the
+      // versioned APKs, so the page always offers the newest build and lists
+      // older ones. Each entry: { file, version, build, commit, builtAt, size }.
+      const APK_DIR = 'app/';
+      let latestApk = null;
 
-      function apkDownloadUrl() {
-        return `${window.location.protocol}//${window.location.host}/${APK_PATH}`;
+      function apkUrl(entry) {
+        return `${window.location.protocol}//${window.location.host}/${APK_DIR}${encodeURIComponent(entry.file)}`;
       }
 
       function formatApkSize(bytes) {
         return bytes >= 1048576 ? `${(bytes / 1048576).toFixed(0)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
       }
 
-      async function checkApkAvailable() {
+      function describeApk(entry) {
+        const parts = [`v${entry.version}`];
+        if (entry.build) parts.push(`build ${entry.build}`);
+        if (entry.commit && entry.commit !== 'nocommit') parts.push(entry.commit);
+        if (entry.size) parts.push(formatApkSize(entry.size));
+        if (entry.builtAt) parts.push(new Date(entry.builtAt).toLocaleDateString());
+        return parts.join(' · ');
+      }
+
+      async function loadApkManifest() {
         try {
-          const response = await fetch(APK_PATH, { method: 'HEAD', cache: 'no-store' });
-          if (!response.ok) return null;
-          const size = Number(response.headers.get('Content-Length')) || 0;
-          const modified = response.headers.get('Last-Modified');
-          const parts = [];
-          if (size) parts.push(formatApkSize(size));
-          if (modified) parts.push(`built ${new Date(modified).toLocaleDateString()}`);
-          return { meta: parts.join(' · ') };
+          const response = await fetch(`${APK_DIR}versions.json`, { cache: 'no-store' });
+          if (!response.ok) return [];
+          const data = await response.json();
+          return Array.isArray(data.builds) ? data.builds.filter((b) => b && b.file) : [];
         } catch (err) {
-          return null;
+          return [];
         }
       }
 
       async function refreshInstallPanel() {
         const { isLocal } = computeMobileApiUrl();
-        installUrl.value = apkDownloadUrl();
         installHint.textContent = isLocal
           ? 'This page is open locally, so the code below only works on this computer. Open this page from your computer\'s LAN IP (start.sh does this for you) or edit the address below, then scan it with your phone camera.'
           : 'Scan this with your phone\'s camera (same Wi-Fi as this computer) or open the link on the phone, then install the APK. Android will ask you to allow installs from this source.';
-        renderQrInto(installQr, installUrl.value.trim(), 'QR code to download the Android app');
 
-        const found = await checkApkAvailable();
-        installLink.setAttribute('aria-disabled', found ? 'false' : 'true');
-        installMeta.textContent = found ? found.meta : '';
-        installStatus.textContent = found
-          ? 'Edit the address if your phone reaches this computer differently - the QR code updates as you type.'
-          : 'The APK is not on this server yet. Build it with EAS, then run ./publish-apk.sh to copy the latest build here.';
+        const builds = await loadApkManifest();
+        latestApk = builds[0] || null;
+
+        if (!latestApk) {
+          installLink.setAttribute('aria-disabled', 'true');
+          installLink.removeAttribute('download');
+          installLink.href = '#';
+          installMeta.textContent = '';
+          installUrl.value = '';
+          installQr.textContent = 'No app has been published to this server yet.';
+          installOlder.classList.add('hidden');
+          installStatus.textContent = 'Build it with ./build-apk.sh (or run ./publish-apk.sh after an EAS build) to add it here.';
+          return;
+        }
+
+        installLink.setAttribute('aria-disabled', 'false');
+        installLink.href = `${APK_DIR}${encodeURIComponent(latestApk.file)}`;
+        installLink.setAttribute('download', latestApk.file);
+        installMeta.textContent = describeApk(latestApk);
+        installUrl.value = apkUrl(latestApk);
+        renderQrInto(installQr, installUrl.value.trim(), 'QR code to download the Android app');
+        installStatus.textContent = 'Edit the address if your phone reaches this computer differently - the QR code updates as you type.';
+
+        const older = builds.slice(1);
+        installOlder.classList.toggle('hidden', older.length === 0);
+        installOlderSummary.textContent = `Older builds (${older.length})`;
+        installOlderList.innerHTML = '';
+        for (const entry of older) {
+          const li = document.createElement('li');
+          const link = document.createElement('a');
+          link.href = `${APK_DIR}${encodeURIComponent(entry.file)}`;
+          link.setAttribute('download', entry.file);
+          link.textContent = `v${entry.version} · build ${entry.build}`;
+          const detail = document.createElement('small');
+          detail.textContent = describeApk(entry);
+          link.appendChild(detail);
+          li.appendChild(link);
+          installOlderList.appendChild(li);
+        }
       }
 
       function showConnectPanel() {

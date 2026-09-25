@@ -5,6 +5,7 @@ import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { getApiBaseUrl, setApiBaseUrl } from '../api/client';
 import { canChooseFolder, chooseSaveFolder, forgetSaveFolder, getSaveFolderLabel, SaveCancelledError } from '../storage/saveLocation';
 import { useTheme } from '../theme/theme';
+import { formatVersionLabel, getVersionParts } from '../utils/appVersion';
 import { RootStackParamList } from '../navigation';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
@@ -15,6 +16,7 @@ export function SettingsScreen({ navigation }: Props) {
   const [saved, setSaved] = useState(false);
   const [folder, setFolder] = useState<string | null>(null);
   const [folderError, setFolderError] = useState('');
+  const versionParts = getVersionParts();
 
   // Reload from storage whenever this screen gains focus, so returning from
   // a successful QR scan (which writes straight to storage) shows up here.
@@ -103,6 +105,14 @@ export function SettingsScreen({ navigation }: Props) {
         </View>
       ) : null}
       {folderError ? <Text style={[styles.hint, { color: colors.danger }]}>{folderError}</Text> : null}
+
+      <Text style={[styles.label, styles.sectionGap, { color: colors.text }]}>About</Text>
+      <Text style={[styles.hint, { color: colors.muted }]} selectable>
+        Gil Tube · {formatVersionLabel(versionParts)}
+      </Text>
+      {versionParts.builtAt && !versionParts.expoGo ? (
+        <Text style={[styles.hint, { color: colors.muted }]}>Built {new Date(versionParts.builtAt).toLocaleString()}</Text>
+      ) : null}
     </View>
   );
 }
