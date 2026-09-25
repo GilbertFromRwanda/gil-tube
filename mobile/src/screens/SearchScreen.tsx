@@ -35,7 +35,7 @@ export function SearchScreen({ navigation }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [heading, setHeading] = useState('');
-  const { open: openVideo, mode: playerMode } = usePlayer();
+  const { open: openVideo, mode: playerMode, registerQueue, notifyQueueChanged } = usePlayer();
   const [refreshing, setRefreshing] = useState(false);
 
   // The endless feed (cached videos, then live YouTube results, paged deeper
@@ -54,6 +54,22 @@ export function SearchScreen({ navigation }: Props) {
     engineRef.current = created;
   }
   const engine = engineRef.current;
+
+  // Next / previous / autoplay walk through this list, and load more of it
+  // when they reach its end.
+  useEffect(() => {
+    registerQueue({
+      items: () => engine.snapshot().items,
+      hasMore: () => engine.snapshot().hasMore,
+      loadMore: () => engine.loadMore(),
+    });
+    return () => registerQueue(null);
+  }, [engine, registerQueue]);
+
+  // The list grew or changed: the player's next / previous buttons re-check.
+  useEffect(() => {
+    notifyQueueChanged();
+  }, [feed.items, notifyQueueChanged]);
 
   // Prefix matches against queries stored in Redis, fetched as you type.
   // The sequence ref drops responses that a newer keystroke already

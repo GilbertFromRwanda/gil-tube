@@ -206,5 +206,197 @@ function rig({ observed = { seconds: 60, at: 1000 }, playingAt = 1000, now = 200
   check('normal round trip unchanged', JSON.stringify(log) === JSON.stringify([['pauseVideo'], ['startAudio', 60], ['stopAudio'], ['resumeVideo', 75.5, true]]), log);
 }
 
+// --- Explicit audio mode ("listen as audio") ---------------------------------
+
+{
+  // starts where the (playing) video is, advanced by the time since it was observed
+  const { h, log } = rig({ observed: { seconds: 60, at: 1000 }, playingAt: 1900, now: 3000 });
+  h.enterAudioMode();
+  await tick();
+  check('entering audio mode pauses the video and starts audio at the video position + elapsed', JSON.stringify(log) === JSON.stringify([['pauseVideo'], ['startAudio', 62]]), log);
+  check('it reports audio active and explicit', h.isAudioActive() && h.isExplicit());
+}
+
+{
+  // a paused video: audio starts where it stopped, not later
+  const { h, log } = rig({ observed: { seconds: 60, at: 1000 }, playingAt: 1000, now: 60_000 });
+  h.enterAudioMode();
+  await tick();
+  check('a paused video starts audio at exactly where it stopped', log.some((e) => e[0] === 'startAudio' && e[1] === 60), log);
+}
+
+{
+  // nothing observed yet: start at the beginning
+  const { h, log } = rig({ observed: null });
+  h.enterAudioMode();
+  await tick();
+  check('with no known position audio starts at 0', log.some((e) => e[0] === 'startAudio' && e[1] === 0), log);
+}
+
+{
+  // the app coming on screen / leaving must not hand audio mode back to the video
+  const { h, log } = rig();
+  h.enterAudioMode();
+  await tick();
+  const before = log.length;
+  h.handleAppState('background');
+  h.handleAppState('active');
+  h.handleAppState('background');
+  h.handleAppState('active');
+  await tick();
+  check('app-state changes do nothing while in audio mode', log.length === before, log.slice(before));
+  check('and it is still audio', h.isAudioActive() && h.isExplicit());
+}
+
+{
+  // switching back to video
+  const { h, log } = rig();
+  h.enterAudioMode();
+  await tick();
+  h.exitAudioMode();
+  check('leaving audio mode stops audio and resumes the video where it got to', JSON.stringify(log.slice(-2)) === JSON.stringify([['stopAudio'], ['resumeVideo', 75.5, true]]), log);
+  check('and it is no longer audio', !h.isAudioActive() && !h.isExplicit());
+  h.handleAppState('background');
+  await tick();
+  check('after that the automatic background handoff works again', log.filter((e) => e[0] === 'startAudio').length === 2, log);
+}
+
+{
+  // a background handoff already running becomes the chosen mode without restarting
+  const { h, log } = rig();
+  h.handleAppState('background');
+  await tick();
+  h.enterAudioMode();
+  await tick();
+  check('choosing audio while a background handoff is running keeps the same audio', log.filter((e) => e[0] === 'startAudio').length === 1, log);
+  h.handleAppState('active');
+  check('and coming back to the app then leaves it as audio', h.isAudioActive() && !log.some((e) => e[0] === 'stopAudio'), log);
+}
+
+{
+  // choosing audio then immediately video, while the audio is still starting
+  let release;
+  const { h, log } = rig({ startAudio: () => new Promise((r) => (release = r)) });
+  h.enterAudioMode();
+  await tick();
+  h.exitAudioMode();
+  release();
+  await tick();
+  await tick();
+  check('switching back before audio finished starting stops it as soon as it is up', JSON.stringify(log.slice(-2)) === JSON.stringify([['stopAudio'], ['resumeVideo', 75.5, true]]), log);
+  check('and nothing is left active', !h.isAudioActive() && !h.isExplicit());
+}
+
+{
+  // audio cannot start
+  const failures = [];
+  const { h, log } = rig({ startAudio: () => Promise.reject(new Error('no network')), onExplicitFailed: () => failures.push('failed') });
+  h.enterAudioMode();
+  await tick();
+  check('a failed start is reported to the UI so the switch can flip back', failures.length === 1, failures);
+  check('audio mode is off again and error reported', !h.isExplicit() && !h.isAudioActive() && log.some((e) => e[0] === 'error'), log);
+  h.enterAudioMode();
+  await tick();
+  check('and it can be tried again', failures.length === 2, failures);
+}
+
+{
+  // a throwing onExplicitFailed must not escape either
+  const { h } = rig({ startAudio: () => Promise.reject(new Error('x')), onExplicitFailed: () => { throw new Error('ui gone'); } });
+  let escaped = null;
+  try { h.enterAudioMode(); await tick(); } catch (e) { escaped = e; }
+  check('a throwing UI callback does not escape', escaped === null, String(escaped));
+}
+
+// --- Autoplay: track end and skipping ---------------------------------------
+
+{
+  // track ends in audio mode: advance to the next, then follow with audio
+  let advanced = 0;
+  const { h, log } = rig({ advanceAudio: async () => { advanced++; return true; } });
+  h.enterAudioMode();
+  await tick();
+  h.handleAudioEnded();
+  await tick();
+  check('a finished audio track asks for the next video', advanced === 1);
+  h.handleVideoChanged();
+  await tick();
+  check('the audio then follows to the new video from its start', log.filter((e) => e[0] === 'startAudio').length === 2 && log.at(-1)[1] === 0, log);
+}
+
+{
+  const { h, log } = rig({ advanceAudio: async () => false });
+  h.enterAudioMode();
+  await tick();
+  h.handleAudioEnded();
+  await tick();
+  check('no next video: nothing else happens (no crash, no restart)', log.filter((e) => e[0] === 'startAudio').length === 1 && !log.some((e) => e[0] === 'error'), log);
+}
+
+{
+  const { h, log } = rig({ advanceAudio: async () => { throw new Error('queue broke'); } });
+  h.enterAudioMode();
+  await tick();
+  let escaped = null;
+  try { h.handleAudioEnded(); await tick(); } catch (e) { escaped = e; }
+  check('a failing advance is contained and reported', escaped === null && log.some((e) => e[0] === 'error' && e[1] === 'queue broke'), [escaped, log]);
+}
+
+{
+  const { h } = rig({ advanceAudio: () => { throw new Error('sync throw'); } });
+  h.enterAudioMode();
+  await tick();
+  let escaped = null;
+  try { h.handleAudioEnded(); await tick(); } catch (e) { escaped = e; }
+  check('a synchronously throwing advance is contained too', escaped === null, String(escaped));
+}
+
+{
+  let advanced = 0;
+  const { h } = rig({ advanceAudio: async () => { advanced++; return true; } });
+  h.handleAudioEnded();
+  await tick();
+  check('an audio-ended event when audio is not active is ignored', advanced === 0);
+}
+
+{
+  // skipping (next/prev) while audio plays retargets the audio; while it does not, nothing happens
+  const { h, log } = rig();
+  h.handleVideoChanged();
+  await tick();
+  check('a video change with no audio playing does nothing', log.length === 0, log);
+  h.enterAudioMode();
+  await tick();
+  h.handleVideoChanged();
+  await tick();
+  check('a video change while audio plays restarts audio for it at 0', log.filter((e) => e[0] === 'startAudio').length === 2 && log.at(-1)[1] === 0, log);
+}
+
+{
+  // skipping while the first audio is still starting: retargeted once it is up, not lost
+  let release;
+  let calls = 0;
+  const { h, log } = rig({ startAudio: (from) => { calls++; log2.push(['startAudio', from]); return calls === 1 ? new Promise((r) => (release = r)) : Promise.resolve(); } });
+  const log2 = [];
+  h.enterAudioMode();
+  await tick();
+  h.handleVideoChanged();          // skipped before the first audio came up
+  release();
+  await tick();
+  await tick();
+  check('a skip that arrives while audio is starting is applied afterwards', log2.length === 2 && log2[1][1] === 0, log2);
+}
+
+{
+  // background handoff also advances when its track ends
+  let advanced = 0;
+  const { h } = rig({ advanceAudio: async () => { advanced++; return true; } });
+  h.handleAppState('background');
+  await tick();
+  h.handleAudioEnded();
+  await tick();
+  check('a track ending during a background handoff also advances', advanced === 1);
+}
+
 console.log(results.every(Boolean) ? `\nALL ${results.length} PASSED` : '\nFAILURES');
 process.exit(results.every(Boolean) ? 0 : 1);

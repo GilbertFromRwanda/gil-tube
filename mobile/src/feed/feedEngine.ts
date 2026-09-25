@@ -45,6 +45,8 @@ export class FeedEngine {
   private items: SearchResult[] = [];
   private seen = new Set<string>();
   private loadingMore = false;
+  private inflight: Promise<void> | null = null;
+  private inflightGeneration = -1;
   private cachedOffset = 0;
   private cachedHasMore = false;
   private searchOffset = 0;
@@ -129,9 +131,22 @@ export class FeedEngine {
     this.notify();
   }
 
-  async loadMore(): Promise<void> {
-    if (this.loadingMore || !this.hasMore()) return;
+  // Resolves when the page being loaded (if any) has arrived, so a caller that
+  // asks while a scroll-triggered load is already running waits for that one
+  // instead of returning at once.
+  loadMore(): Promise<void> {
+    // A load that belongs to an earlier search must not be reused for this one.
+    if (this.inflight && this.inflightGeneration === this.generation) return this.inflight;
+    if (this.loadingMore || !this.hasMore()) return Promise.resolve();
+    const run = this.loadMoreNow().finally(() => {
+      if (this.inflight === run) this.inflight = null;
+    });
+    this.inflight = run;
+    this.inflightGeneration = this.generation;
+    return run;
+  }
 
+  private async loadMoreNow(): Promise<void> {
     const generation = this.generation;
     this.loadingMore = true;
     this.notify();

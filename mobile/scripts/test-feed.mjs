@@ -124,12 +124,12 @@ function make({ pages = {}, cachedPages = [] } = {}) {
   await engine.startSearch('q');
   const first = engine.loadMore();
   await tick();
-  await engine.loadMore();
-  await engine.loadMore();
+  const again = [engine.loadMore(), engine.loadMore()]; // they share the running load
+  await tick();
   check('repeated onEndReached calls while loading start nothing new', calls.filter((c) => c === 'search:q@12x24').length === 1, calls);
   check('loadingMore is reported while in flight', engine.snapshot().loadingMore === true);
   release();
-  await first;
+  await Promise.all([first, ...again]);
   check('and released afterwards', engine.snapshot().loadingMore === false);
 }
 
@@ -230,6 +230,48 @@ function make({ pages = {}, cachedPages = [] } = {}) {
   await engine.loadMore();
   await tick();
   check('the screen is notified on start and around a load', afterStart >= 1 && changes() > afterStart, [afterStart, changes()]);
+}
+
+// 10. asking to load more while a load is already running waits for that load
+{
+  let release;
+  const gate = new Promise((r) => (release = r));
+  const { engine, calls } = make({
+    pages: {
+      0: { query: 'q', results: [video(1)], has_more: true, next_offset: 12 },
+      12: () => gate.then(() => ({ query: 'q', results: [video(2), video(3)], has_more: false, next_offset: 24 })),
+    },
+  });
+  await engine.startSearch('q');
+  const scrollLoad = engine.loadMore();
+  await tick();
+  let waiterDone = false;
+  const waiter = engine.loadMore().then(() => (waiterDone = true));
+  await tick();
+  check('a second caller does not return before the page arrives', waiterDone === false);
+  release();
+  await Promise.all([scrollLoad, waiter]);
+  check('it resumes once the page is in, without a second request', waiterDone && engine.snapshot().items.length === 3 && calls.filter((c) => c.includes('@12')).length === 1, [engine.snapshot().items.length, calls]);
+}
+
+// 11. a load from an earlier search is not reused for the new one
+{
+  let release;
+  const gate = new Promise((r) => (release = r));
+  const { engine, calls } = make({
+    pages: {
+      0: { query: 'q', results: [video(1)], has_more: true, next_offset: 12 },
+      12: (offset) => (calls.filter((c) => c.includes('@12')).length === 1 ? gate.then(() => ({ query: 'q', results: [video(9)], has_more: true, next_offset: 24 })) : Promise.resolve({ query: 'q', results: [video(2)], has_more: false, next_offset: 24 })),
+    },
+  });
+  await engine.startSearch('q');
+  engine.loadMore();
+  await tick();
+  await engine.startSearch('q');
+  await engine.loadMore();
+  release();
+  await tick();
+  check('after a new search, loadMore starts its own request', calls.filter((c) => c.includes('@12')).length === 2, calls);
 }
 
 console.log(results.every(Boolean) ? `\nALL ${results.length} PASSED` : '\nFAILURES');
