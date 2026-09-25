@@ -1,8 +1,9 @@
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Platform,
   Pressable,
   RefreshControl,
   StyleSheet,
@@ -20,6 +21,9 @@ import { useTheme } from '../theme/theme';
 import { RootStackParamList } from '../navigation';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Search'>;
+
+// Defined once, outside the component, so the list always gets the same function.
+const keyExtractor = (item: SearchResult, index: number) => `${item.id || item.url}-${index}`;
 
 const DEFAULT_QUERY = 'Rwanda SDA music';
 const PAGE_SIZE = 24;
@@ -180,6 +184,34 @@ export function SearchScreen({ navigation }: Props) {
     }
   }, [activeQuery, loadInitial]);
 
+  // Stable identities for everything the list receives: new functions or
+  // style arrays every render make the list (and every card) re-render.
+  const renderItem = useCallback(
+    ({ item }: { item: SearchResult }) => <ResultCard result={item} colors={colors} onPress={openVideo} />,
+    [colors, openVideo],
+  );
+  const listContentStyle = useMemo(
+    () => [
+      styles.list,
+      results.length === 0 && styles.listEmpty,
+      // Keep the last results clear of the docked mini player.
+      playerMode === 'mini' && styles.listMini,
+    ],
+    [results.length, playerMode],
+  );
+  const refreshControl = useMemo(
+    () => (
+      <RefreshControl
+        refreshing={refreshing}
+        onRefresh={onRefresh}
+        tintColor={colors.primary}
+        colors={[colors.primary]}
+        progressBackgroundColor={colors.panel}
+      />
+    ),
+    [refreshing, onRefresh, colors],
+  );
+
   const loadMoreCached = useCallback(async () => {
     if (!cachedHasMore || loadingMore) return;
     setLoadingMore(true);
@@ -269,30 +301,18 @@ export function SearchScreen({ navigation }: Props) {
       ) : (
         <FlatList
           data={results}
-          keyExtractor={(item, index) => `${item.id || item.url}-${index}`}
+          keyExtractor={keyExtractor}
           numColumns={2}
-          contentContainerStyle={[
-            styles.list,
-            results.length === 0 && styles.listEmpty,
-            // Keep the last results clear of the docked mini player.
-            playerMode === 'mini' && styles.listMini,
-          ]}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              tintColor={colors.primary}
-              colors={[colors.primary]}
-              progressBackgroundColor={colors.panel}
-            />
-          }
-          renderItem={({ item }) => (
-            <ResultCard
-              result={item}
-              colors={colors}
-              onPress={() => openVideo(item)}
-            />
-          )}
+          contentContainerStyle={listContentStyle}
+          refreshControl={refreshControl}
+          renderItem={renderItem}
+          // Render a screenful or so up front and only a small window around
+          // the viewport afterwards, instead of every card loaded so far.
+          initialNumToRender={8}
+          maxToRenderPerBatch={6}
+          windowSize={7}
+          updateCellsBatchingPeriod={50}
+          removeClippedSubviews={Platform.OS === 'android'}
           onEndReachedThreshold={0.4}
           onEndReached={loadMoreCached}
           ListFooterComponent={

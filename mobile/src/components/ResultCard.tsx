@@ -1,30 +1,45 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SearchResult } from '../api/types';
 import { Palette } from '../theme/theme';
 import { formatDuration } from '../utils/format';
 
-export function ResultCard({
+// The result's own thumbnail is 1280x720; a grid tile is ~180px wide, so
+// decoding it (times dozens of tiles) is wasted memory and time. YouTube
+// serves a 320x180 rendition at a predictable address for real video ids.
+function gridThumbnail(result: SearchResult): string | null {
+  return result.id && result.id.length === 11
+    ? `https://i.ytimg.com/vi/${result.id}/mqdefault.jpg`
+    : result.thumbnail;
+}
+
+// Memoised: the list re-renders whenever anything on the screen changes
+// (typing, suggestions, loading flags, the player), and without this every
+// card rebuilt each time. `onPress` must be a stable function that takes the
+// result, so an unchanged card is skipped entirely.
+export const ResultCard = React.memo(function ResultCard({
   result,
   colors,
   onPress,
 }: {
   result: SearchResult;
   colors: Palette;
-  onPress: () => void;
+  onPress: (result: SearchResult) => void;
 }) {
+  const [smallFailed, setSmallFailed] = useState(false);
+  const thumb = smallFailed ? result.thumbnail : gridThumbnail(result);
   const durationLabel = formatDuration(result.duration);
   return (
     <Pressable
-      onPress={onPress}
+      onPress={() => onPress(result)}
       style={({ pressed }) => [
         styles.card,
         { backgroundColor: colors.panel, borderColor: colors.border, opacity: pressed ? 0.85 : 1 },
       ]}
     >
       <View style={styles.thumbWrap}>
-        {result.thumbnail ? (
-          <Image source={{ uri: result.thumbnail }} style={styles.thumb} />
+        {thumb ? (
+          <Image source={{ uri: thumb }} style={styles.thumb} onError={() => setSmallFailed(true)} />
         ) : (
           <View style={[styles.thumb, { backgroundColor: colors.panelAlt }]} />
         )}
@@ -46,7 +61,7 @@ export function ResultCard({
       </View>
     </Pressable>
   );
-}
+});
 
 const styles = StyleSheet.create({
   card: {
