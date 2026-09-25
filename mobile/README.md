@@ -71,6 +71,14 @@ The address is saved locally (AsyncStorage) and reused on future launches.
   the sheet): audio stays on whatever the app is doing, follows the queue when
   a track ends, and falls back to video if it can't start. Tests:
   `npm run test:queue`, `npm run test:handoff`; `npm test` runs all three.
+- `plugins/withAudioRemoteCommands.js` — **next / previous on the notification,
+  lock screen and headset** while audio plays. expo-audio's media session
+  removes those commands, so Android showed the buttons greyed out. This config
+  plugin edits three Kotlin files in `node_modules/expo-audio` when the native
+  project is generated (each EAS build), so they are offered and presses reach
+  JS as a `remoteCommand` event (handled in `PlayerHost`). It fails the build if
+  expo-audio's code no longer matches, e.g. after an upgrade - update the
+  plugin then. Not active in Expo Go.
 - `src/downloads/DownloadsContext.tsx` — app-level store of download jobs
   with one shared poller (job + progress once a second, stopped when
   nothing is running), so progress survives closing the preview sheet.

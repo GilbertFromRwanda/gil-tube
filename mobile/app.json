@@ -32,6 +32,7 @@
     },
     "plugins": [
       "expo-sharing",
+      "./plugins/withAudioRemoteCommands",
       [
         "expo-camera",
         {
