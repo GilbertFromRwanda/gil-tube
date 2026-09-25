@@ -145,7 +145,7 @@ def test_search_returns_result_list():
         assert len(payload['results']) == 2
         assert payload['results'][0]['url'] == 'https://www.youtube.com/watch?v=vid1'
         assert payload['results'][1]['uploader'] == 'Channel Two'
-        mocked.assert_called_once_with('lofi beats', 5)
+        mocked.assert_called_once_with('lofi beats', 5, 0)
 
 
 def test_search_uses_cache_on_second_call():
@@ -319,3 +319,99 @@ def test_search_refresh_bypasses_cache_and_updates_it():
         # The fresh result replaced the cached one for later plain searches.
         assert client.post('/api/v1/search', json={'query': 'q'}).get_json()['results'][0]['id'] == 'new00000001'
         assert run.call_count == 1
+
+
+def _page_of(n, prefix='p'):
+    return {'entries': [
+        {'id': f'{prefix}{i:010d}'[:11], 'ie_key': 'Youtube', 'title': f'T{i}', 'duration': 60,
+         'thumbnails': [{'url': 'https://i.ytimg.com/x.jpg'}], 'uploader': 'U'}
+        for i in range(n)
+    ]}
+
+
+def test_search_reports_paging_and_full_window_means_more():
+    main.cache = main.build_cache_from_env()
+    client = main.app.test_client()
+    with patch.object(main, 'run_search', return_value=_page_of(12)) as run:
+        data = client.post('/api/v1/search', json={'query': 'q', 'limit': 12}).get_json()
+        run.assert_called_once_with('q', 12, 0)
+    assert data['offset'] == 0 and data['next_offset'] == 12
+    assert data['has_more'] is True and len(data['results']) == 12
+
+
+def test_search_short_window_means_no_more_results():
+    main.cache = main.build_cache_from_env()
+    client = main.app.test_client()
+    with patch.object(main, 'run_search', return_value=_page_of(5)):
+        data = client.post('/api/v1/search', json={'query': 'q', 'limit': 12, 'offset': 24}).get_json()
+    assert data['has_more'] is False
+    assert data['offset'] == 24 and data['next_offset'] == 36
+
+
+def test_deeper_pages_call_the_paged_search_and_are_cached_separately():
+    main.cache = main.build_cache_from_env()
+    client = main.app.test_client()
+    with patch.object(main, 'run_search', side_effect=lambda q, limit, offset=0: _page_of(limit, f'o{offset}x')) as run:
+        first = client.post('/api/v1/search', json={'query': 'q', 'limit': 6, 'offset': 0}).get_json()
+        second = client.post('/api/v1/search', json={'query': 'q', 'limit': 6, 'offset': 6}).get_json()
+        assert [c.args for c in run.call_args_list] == [('q', 6, 0), ('q', 6, 6)]
+        assert {r['id'] for r in first['results']}.isdisjoint({r['id'] for r in second['results']})
+        # Repeat requests are served from each page's own cache entry.
+        client.post('/api/v1/search', json={'query': 'q', 'limit': 6, 'offset': 6})
+        client.post('/api/v1/search', json={'query': 'q', 'limit': 6, 'offset': 0})
+        assert run.call_count == 2
+
+
+def test_search_stops_at_the_depth_limit_without_asking_youtube():
+    main.cache = main.build_cache_from_env()
+    client = main.app.test_client()
+    with patch.object(main, 'run_search') as run:
+        data = client.post('/api/v1/search', json={'query': 'q', 'limit': 12, 'offset': main.MAX_SEARCH_DEPTH}).get_json()
+        run.assert_not_called()
+    assert data['results'] == [] and data['has_more'] is False
+
+
+def test_last_page_before_the_depth_limit_reports_no_more():
+    main.cache = main.build_cache_from_env()
+    client = main.app.test_client()
+    offset = main.MAX_SEARCH_DEPTH - 12
+    with patch.object(main, 'run_search', return_value=_page_of(12)):
+        data = client.post('/api/v1/search', json={'query': 'q', 'limit': 12, 'offset': offset}).get_json()
+    assert data['has_more'] is False
+
+
+def test_bad_offset_values_are_treated_as_the_first_page():
+    main.cache = main.build_cache_from_env()
+    client = main.app.test_client()
+    with patch.object(main, 'run_search', return_value=_page_of(12)) as run:
+        for bad in ('abc', -5, None):
+            client.post('/api/v1/search', json={'query': f'q{bad}', 'limit': 12, 'offset': bad})
+    assert all(c.args[2] == 0 for c in run.call_args_list)
+
+
+def test_search_pages_drop_duplicates_and_channels():
+    main.cache = main.build_cache_from_env()
+    client = main.app.test_client()
+    info = {'entries': [
+        {'id': 'AAAAAAAAAAA', 'ie_key': 'Youtube', 'title': 'a'},
+        {'id': 'AAAAAAAAAAA', 'ie_key': 'Youtube', 'title': 'a again'},
+        {'id': 'UClGmPgUP-6fRH-yP99c9cYQ', 'ie_key': 'YoutubeTab', 'title': 'a channel'},
+        {'id': 'BBBBBBBBBBB', 'ie_key': 'Youtube', 'title': 'b'},
+    ]}
+    with patch.object(main, 'run_search', return_value=info):
+        data = client.post('/api/v1/search', json={'query': 'q', 'limit': 4, 'offset': 8}).get_json()
+    assert [r['id'] for r in data['results']] == ['AAAAAAAAAAA', 'BBBBBBBBBBB']
+    # 4 raw entries were asked for and 4 came back, so there is probably more.
+    assert data['has_more'] is True
+
+
+def test_pages_cached_before_paging_existed_still_work():
+    main.cache = main.build_cache_from_env()
+    client = main.app.test_client()
+    legacy = {'query': 'old', 'results': [{'id': 'AAAAAAAAAAA', 'title': 'x', 'url': 'u'}]}
+    main.cache.set(main.cache_key('12:old', prefix='search'), legacy, 600)
+    with patch.object(main, 'run_search') as run:
+        data = client.post('/api/v1/search', json={'query': 'Old', 'limit': 12}).get_json()
+        run.assert_not_called()
+    assert data['offset'] == 0 and data['next_offset'] == 12 and data['has_more'] is True
+    assert len(data['results']) == 1

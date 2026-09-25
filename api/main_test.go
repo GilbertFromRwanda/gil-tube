@@ -347,3 +347,55 @@ func TestJobLookupAndCancellation(t *testing.T) {
 		t.Fatalf("expected cancelled status, got %v", cancelPayload["status"])
 	}
 }
+
+func TestSearchForwardsOffsetAndPagingFieldsToTheExtractor(t *testing.T) {
+	var got map[string]any
+	extractor := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/search" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"query": "q", "results": []any{}, "offset": 48, "next_offset": 72, "has_more": true,
+		})
+	}))
+	defer extractor.Close()
+
+	router := setupRouter(extractor.URL, extractor.Client())
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/search", strings.NewReader(`{"query":"q","limit":24,"offset":48}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	if got["offset"] != float64(48) || got["limit"] != float64(24) {
+		t.Fatalf("extractor got %v, want offset 48 and limit 24", got)
+	}
+	var out map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	if out["has_more"] != true || out["next_offset"] != float64(72) {
+		t.Fatalf("paging fields were not passed back: %v", out)
+	}
+}
+
+func TestSearchClampsANegativeOffsetToZero(t *testing.T) {
+	var got map[string]any
+	extractor := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"query":"q","results":[]}`))
+	}))
+	defer extractor.Close()
+
+	router := setupRouter(extractor.URL, extractor.Client())
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/search", strings.NewReader(`{"query":"q","offset":-7}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(httptest.NewRecorder(), req)
+
+	if got["offset"] != float64(0) {
+		t.Fatalf("negative offset reached the extractor as %v, want 0", got["offset"])
+	}
+}
