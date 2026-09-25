@@ -46,6 +46,12 @@
             "usesCleartextTraffic": true
           }
         }
+      ],
+      [
+        "expo-audio",
+        {
+          "recordAudioAndroid": false
+        }
       ]
     ],
     "scheme": "giltube",
