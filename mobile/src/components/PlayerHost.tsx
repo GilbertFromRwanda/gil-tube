@@ -125,6 +125,14 @@ export function PlayerHost() {
     // Only re-run when a different video is opened.
   }, [url]);
 
+  // Failsafe: if a video never reports a state (an embed error, say), don't
+  // leave the thumbnail cover and spinner over the player forever.
+  useEffect(() => {
+    if (!current || playerReady) return;
+    const timer = setTimeout(() => setPlayerReady(true), 8000);
+    return () => clearTimeout(timer);
+  }, [current, playerReady, url]);
+
   const goExpanded = useCallback(() => {
     setMode('expanded');
     animateTo('expanded');
@@ -360,6 +368,11 @@ export function PlayerHost() {
               onChangeState={(state: string) => {
                 if (state === 'paused' || state === 'ended') setPlaying(false);
                 if (state === 'playing') setPlaying(true);
+                // onReady fires only once, when the player first starts. A
+                // video loaded into the already-running player (opened while
+                // minimised) only reports these state changes, so they are
+                // what clear the thumbnail cover for it.
+                if (state === 'buffering' || state === 'playing' || state === 'video cued') setPlayerReady(true);
               }}
             />
             {/* Cover until ready: the thumbnail from the results grid plus a
