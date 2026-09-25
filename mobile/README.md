@@ -45,6 +45,13 @@ The address is saved locally (AsyncStorage) and reused on future launches.
   expand, swipe it down or press ✕ to stop. One YouTube player stays mounted
   and is only scaled/moved by transforms (no reload), using RN's `Animated`
   only - no gesture/reanimated native deps.
+- `src/feed/feedEngine.ts` — the **endless feed**. Starts as the cached (Redis)
+  videos or a live search; when the cache runs out it carries on with live
+  YouTube results for the default query, and a search itself pages deeper as
+  you scroll (`POST /api/v1/search` with `offset`, depth capped at 300). Drops
+  repeats, fetches the next page ahead of the scroll, skips a page that is all
+  repeats (bounded), ignores late replies for an old search, and retries a
+  failed page. React-free so it's unit-tested: `npm run test:feed`.
 - `src/player/handoff.ts` — **background audio.** YouTube's embed stops when
   the app leaves the screen (power button, other app), so at that moment
   playback is handed to an audio-only stream from the server

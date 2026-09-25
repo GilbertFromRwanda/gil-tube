@@ -80,11 +80,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 // `refresh` skips the server's cached copy of this search and fetches fresh
-// results (used by pull-to-refresh).
-export function search(query: string, limit = 12, refresh = false): Promise<SearchResponse> {
+// results (used by pull-to-refresh); `offset` pages deeper into the results.
+export function search(query: string, limit = 12, refresh = false, offset = 0): Promise<SearchResponse> {
   return request('/api/v1/search', {
     method: 'POST',
-    body: JSON.stringify({ query, limit, refresh }),
+    body: JSON.stringify({ query, limit, offset, refresh }),
   });
 }
 
