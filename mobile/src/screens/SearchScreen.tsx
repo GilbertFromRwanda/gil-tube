@@ -13,7 +13,7 @@ import {
 import { ApiNotConfiguredError, cachedSearches, prewarmPreviews, search, searchSuggestions } from '../api/client';
 import { SearchResult } from '../api/types';
 import { DownloadsTray } from '../components/DownloadsTray';
-import { PreviewSheet } from '../components/PreviewSheet';
+import { usePlayer } from '../player/PlayerContext';
 import { ResultCard } from '../components/ResultCard';
 import { SkeletonGrid } from '../components/SkeletonGrid';
 import { useTheme } from '../theme/theme';
@@ -31,7 +31,7 @@ export function SearchScreen({ navigation }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [heading, setHeading] = useState('');
-  const [selected, setSelected] = useState<SearchResult | null>(null);
+  const { open: openVideo, mode: playerMode } = usePlayer();
   const [refreshing, setRefreshing] = useState(false);
   // What the list currently shows: a live search's query, or null for the
   // cached-videos feed. Pull-to-refresh reloads whichever this is.
@@ -271,7 +271,12 @@ export function SearchScreen({ navigation }: Props) {
           data={results}
           keyExtractor={(item, index) => `${item.id || item.url}-${index}`}
           numColumns={2}
-          contentContainerStyle={[styles.list, results.length === 0 && styles.listEmpty]}
+          contentContainerStyle={[
+            styles.list,
+            results.length === 0 && styles.listEmpty,
+            // Keep the last results clear of the docked mini player.
+            playerMode === 'mini' && styles.listMini,
+          ]}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -285,7 +290,7 @@ export function SearchScreen({ navigation }: Props) {
             <ResultCard
               result={item}
               colors={colors}
-              onPress={() => setSelected(item)}
+              onPress={() => openVideo(item)}
             />
           )}
           onEndReachedThreshold={0.4}
@@ -301,7 +306,6 @@ export function SearchScreen({ navigation }: Props) {
         />
       )}
 
-      <PreviewSheet result={selected} onClose={() => setSelected(null)} />
     </View>
   );
 }
@@ -338,5 +342,6 @@ const styles = StyleSheet.create({
   list: { paddingHorizontal: 6, paddingBottom: 24 },
   // Lets an empty/errored list still be pulled to retry.
   listEmpty: { flexGrow: 1 },
+  listMini: { paddingBottom: 120 },
   empty: { textAlign: 'center', marginTop: 32 },
 });

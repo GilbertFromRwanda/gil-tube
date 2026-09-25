@@ -37,10 +37,16 @@ The address is saved locally (AsyncStorage) and reused on future launches.
 
 - `src/api/client.ts` — thin fetch wrapper over the same `/api/v1/...`
   endpoints the web UI calls (search, preview, jobs, progress, file).
-- `src/components/PreviewSheet.tsx` — the bottom sheet that slides up when
-  you tap a video: plays it, lists formats in a picker, starts the job.
-  Plain `Modal` + `Animated` (drag the handle down, tap the backdrop, or
-  Android back to dismiss), so it needs no gesture/reanimated native deps.
+- `src/components/PlayerHost.tsx` + `src/player/PlayerContext.tsx` — the
+  app-wide video player. Tap a video and a bottom sheet slides up (player,
+  format picker, download). Drag its handle down, tap the dimmed area, or press
+  Android back and it shrinks to a **mini player** docked at the bottom, still
+  playing, while you browse or open Settings. Tap or drag up on the bar to
+  expand, swipe it down or press ✕ to stop. One YouTube player stays mounted
+  and is only scaled/moved by transforms (no reload), using RN's `Animated`
+  only - no gesture/reanimated native deps. The mini player plays only while
+  the app is on screen; playing in the background would need our own audio
+  source, since YouTube's embed pauses when the app is backgrounded.
 - `src/downloads/DownloadsContext.tsx` — app-level store of download jobs
   with one shared poller (job + progress once a second, stopped when
   nothing is running), so progress survives closing the preview sheet.

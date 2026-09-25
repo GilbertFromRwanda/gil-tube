@@ -2,9 +2,12 @@ import { DarkTheme, DefaultTheme, NavigationContainer } from '@react-navigation/
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { StatusBar } from 'expo-status-bar';
 import React from 'react';
+import { View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { PlayerHost } from './src/components/PlayerHost';
 import { DownloadsProvider } from './src/downloads/DownloadsContext';
 import { RootStackParamList } from './src/navigation';
+import { PlayerProvider } from './src/player/PlayerContext';
 import { ScanQrScreen } from './src/screens/ScanQrScreen';
 import { SearchScreen } from './src/screens/SearchScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
@@ -42,7 +45,14 @@ export default function App() {
     <SafeAreaProvider>
       <ThemeProvider>
         <DownloadsProvider>
-          <Navigator />
+          <PlayerProvider>
+            {/* The player sits above the navigator so it stays visible (as the
+                mini bar) while you move around the app. */}
+            <View style={{ flex: 1 }}>
+              <Navigator />
+              <PlayerHost />
+            </View>
+          </PlayerProvider>
         </DownloadsProvider>
       </ThemeProvider>
     </SafeAreaProvider>
