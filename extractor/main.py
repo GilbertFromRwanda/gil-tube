@@ -3,6 +3,7 @@ import json as jsonlib
 import logging
 import os
 import time
+import urllib.parse
 
 from flask import Flask, jsonify, request
 from yt_dlp import YoutubeDL
@@ -29,6 +30,15 @@ MAX_CACHED_VIDEOS = 50
 CACHED_VIDEOS_SCAN_CEILING = 500
 MAX_CACHED_QUERIES = 20
 MAX_SUGGESTIONS = 8
+# How deep into a query's results the endless feed may go. Each deeper page
+# costs more (YouTube re-walks the earlier pages: ~3s for the first page, ~8s by
+# result 100), and relevance falls off, so it stops here rather than running
+# forever.
+MAX_SEARCH_DEPTH = 300
+PAGED_SEARCH_TIMEOUT_SECONDS = 30
+# YouTube's "type: video" filter, the same one ytsearch applies, so later pages
+# don't mix channels and playlists back in.
+SEARCH_VIDEO_FILTER = "EgIQAQ%3D%3D"
 
 logger = logging.getLogger("extractor")
 logging.basicConfig(level=logging.INFO)
@@ -117,7 +127,7 @@ def extract_with_timeout(url: str, timeout_seconds: int):
         return future.result(timeout=timeout_seconds)
 
 
-def run_search(query: str, limit: int):
+def run_search(query: str, limit: int, offset: int = 0):
     # extract_flat avoids resolving each result's full format list (which
     # would be slow and pointless here); we only need id/title/thumbnail for
     # a result grid. This is the same yt-dlp "ytsearch" pseudo-extractor
@@ -134,13 +144,27 @@ def run_search(query: str, limit: int):
         "skip_download": True,
         "socket_timeout": 15,
     }
+    if offset <= 0:
+        with YoutubeDL(ydl_opts) as ydl:
+            return ydl.extract_info(f"ytsearch{limit}:{query}", download=False)
+
+    # ytsearchN can only return the first N. Deeper pages walk the search
+    # results page instead and slice out just the window asked for.
+    results_url = (
+        "https://www.youtube.com/results?search_query="
+        + urllib.parse.quote(query)
+        + "&sp="
+        + SEARCH_VIDEO_FILTER
+    )
+    ydl_opts["playliststart"] = offset + 1
+    ydl_opts["playlistend"] = offset + limit
     with YoutubeDL(ydl_opts) as ydl:
-        return ydl.extract_info(f"ytsearch{limit}:{query}", download=False)
+        return ydl.extract_info(results_url, download=False)
 
 
-def search_with_timeout(query: str, limit: int, timeout_seconds: int):
+def search_with_timeout(query: str, limit: int, timeout_seconds: int, offset: int = 0):
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(run_search, query, limit)
+        future = executor.submit(run_search, query, limit, offset)
         return future.result(timeout=timeout_seconds)
 
 
@@ -234,6 +258,18 @@ def extract():
     return jsonify(result)
 
 
+def with_paging(result, offset, limit):
+    """Adds the paging fields to a search result. Pages cached before paging
+    existed lack them; those are assumed to have more, since a first page of
+    results always does."""
+    paged = dict(result)
+    paged.setdefault("offset", offset)
+    paged.setdefault("next_offset", offset + limit)
+    if "has_more" not in paged:
+        paged["has_more"] = bool(paged.get("results")) and offset + limit < MAX_SEARCH_DEPTH
+    return paged
+
+
 @app.post("/api/v1/search")
 def search():
     payload = request.get_json(silent=True) or {}
@@ -250,34 +286,65 @@ def search():
         limit = 12
     limit = max(1, min(limit, MAX_SEARCH_RESULTS))
 
+    try:
+        offset = max(0, int(payload.get("offset", 0)))
+    except (TypeError, ValueError):
+        offset = 0
+
+    # Past the depth limit there is nothing more to offer; say so rather than
+    # asking YouTube for an ever more expensive page.
+    if offset >= MAX_SEARCH_DEPTH:
+        return jsonify(
+            {"query": query, "results": [], "offset": offset, "next_offset": offset, "has_more": False}
+        )
+
     # `refresh` lets a pull-to-refresh skip the (long-lived) cached result and
     # fetch fresh; the fresh result still overwrites the cache entry below.
     refresh = payload.get("refresh") is True
 
-    key = cache_key(f"{limit}:{query.lower()}", prefix="search")
+    # The first page keeps its original cache key (so pages cached before
+    # paging existed are still hits); deeper pages get one entry each.
+    key_value = f"{limit}:{query.lower()}" if offset == 0 else f"{limit}:{offset}:{query.lower()}"
+    key = cache_key(key_value, prefix="search")
     cached = None if refresh else cache.get(key)
     if cached is not None:
-        log_event("search_cache_hit", query=query)
-        return jsonify(cached)
+        log_event("search_cache_hit", query=query, offset=offset)
+        return jsonify(with_paging(cached, offset, limit))
 
     started = time.monotonic()
     try:
-        info = search_with_timeout(query, limit, SEARCH_TIMEOUT_SECONDS)
+        timeout = SEARCH_TIMEOUT_SECONDS if offset == 0 else PAGED_SEARCH_TIMEOUT_SECONDS
+        info = search_with_timeout(query, limit, timeout, offset)
     except concurrent.futures.TimeoutError:
-        log_event("search_timeout", query=query)
+        log_event("search_timeout", query=query, offset=offset)
         return error_response("SEARCH_TIMEOUT", "search timed out", 504, retryable=True)
     except Exception as err:  # unexpected extractor failure
-        log_event("search_error", query=query, error=str(err))
+        log_event("search_error", query=query, offset=offset, error=str(err))
         return error_response("SEARCH_FAILED", "search failed", 502, retryable=True)
 
     duration_ms = int((time.monotonic() - started) * 1000)
 
     entries = (info or {}).get("entries") or []
-    results = [build_search_result(e) for e in entries if e and is_video_entry(e)]
+    results = []
+    seen_ids = set()
+    for entry in entries:
+        if not entry or not is_video_entry(entry) or entry.get("id") in seen_ids:
+            continue
+        seen_ids.add(entry.get("id"))
+        results.append(build_search_result(entry))
 
-    result = {"query": query, "results": results}
+    # A full window means there is probably more. It is counted on the raw
+    # entries (channels and playlists included) because that is the space the
+    # offsets are in.
+    result = {
+        "query": query,
+        "results": results,
+        "offset": offset,
+        "next_offset": offset + limit,
+        "has_more": len(entries) >= limit and offset + limit < MAX_SEARCH_DEPTH,
+    }
     cache.set(key, result, SEARCH_CACHE_TTL_SECONDS)
-    log_event("search_completed", query=query, duration_ms=duration_ms, result_count=len(results))
+    log_event("search_completed", query=query, offset=offset, duration_ms=duration_ms, result_count=len(results))
     return jsonify(result)
 
 
