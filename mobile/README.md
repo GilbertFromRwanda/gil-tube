@@ -44,9 +44,16 @@ The address is saved locally (AsyncStorage) and reused on future launches.
   playing, while you browse or open Settings. Tap or drag up on the bar to
   expand, swipe it down or press ✕ to stop. One YouTube player stays mounted
   and is only scaled/moved by transforms (no reload), using RN's `Animated`
-  only - no gesture/reanimated native deps. The mini player plays only while
-  the app is on screen; playing in the background would need our own audio
-  source, since YouTube's embed pauses when the app is backgrounded.
+  only - no gesture/reanimated native deps.
+- `src/player/handoff.ts` — **background audio.** YouTube's embed stops when
+  the app leaves the screen (power button, other app), so at that moment
+  playback is handed to an audio-only stream from the server
+  (`GET /api/v1/audio`, AAC, seekable) played with `expo-audio`, continuing
+  from the same second with lock-screen/notification controls; returning to
+  the app hands it back to the video where the audio got to. The decision
+  logic is pure and unit-tested (timing races such as the embed pausing just
+  before the app backgrounds). Needs a real build - the background-audio
+  config (iOS audio mode, Android media foreground service) isn't in Expo Go.
 - `src/downloads/DownloadsContext.tsx` — app-level store of download jobs
   with one shared poller (job + progress once a second, stopped when
   nothing is running), so progress survives closing the preview sheet.

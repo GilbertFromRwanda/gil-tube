@@ -1,8 +1,10 @@
 import { Picker } from '@react-native-picker/picker';
+import { setAudioModeAsync, useAudioPlayer } from 'expo-audio';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
+  AppState,
   BackHandler,
   Easing,
   Image,
@@ -16,10 +18,11 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import YoutubePlayer from 'react-native-youtube-iframe';
-import { createJob, getCachedPreview, preview } from '../api/client';
+import YoutubePlayer, { YoutubeIframeRef } from 'react-native-youtube-iframe';
+import { createJob, getAudioStreamUrl, getCachedPreview, preview } from '../api/client';
 import { PreviewInfo } from '../api/types';
 import { isActive, useDownloads } from '../downloads/DownloadsContext';
+import { createHandoff, Handoff } from '../player/handoff';
 import { usePlayer } from '../player/PlayerContext';
 import { useTheme } from '../theme/theme';
 import { formatDuration, formatLabel } from '../utils/format';
@@ -72,6 +75,107 @@ export function PlayerHost() {
   const [jobId, setJobId] = useState<string | null>(null);
   const scrollRef = useRef<ScrollView>(null);
   const closing = useRef(false);
+
+  // --- Background audio -----------------------------------------------------
+  // The YouTube embed stops when the app leaves the screen, so at that moment
+  // playback is handed to an audio-only stream from our server (and handed back
+  // when the app returns). See player/handoff.ts for the rules; this wires it
+  // to the real player, audio engine and app state.
+  const ytRef = useRef<YoutubeIframeRef | null>(null);
+  const audio = useAudioPlayer(null);
+  const audioRef = useRef(audio);
+  audioRef.current = audio;
+  const currentRef = useRef(current);
+  currentRef.current = current;
+  const playingRef = useRef(playing);
+  playingRef.current = playing;
+  const lastVideoTime = useRef<{ seconds: number; at: number } | null>(null);
+  const lastPlayingAt = useRef<number | null>(null);
+  const handoffRef = useRef<Handoff | null>(null);
+
+  useEffect(() => {
+    setAudioModeAsync({
+      playsInSilentMode: true,
+      shouldPlayInBackground: true,
+      // Needed for the lock-screen / notification controls to attach to us.
+      interruptionMode: 'doNotMix',
+    }).catch(() => {});
+  }, []);
+
+  if (!handoffRef.current) {
+    handoffRef.current = createHandoff({
+      now: Date.now,
+      lastVideoTime: () => lastVideoTime.current,
+      lastPlayingAt: () => lastPlayingAt.current,
+      pauseVideo: () => setPlaying(false),
+      startAudio: async (fromSeconds) => {
+        const video = currentRef.current;
+        if (!video) throw new Error('no video open');
+        const player = audioRef.current;
+        player.replace({ uri: await getAudioStreamUrl(video.url) });
+        await player.seekTo(fromSeconds);
+        player.setActiveForLockScreen(true, {
+          title: video.title,
+          artist: video.uploader ?? undefined,
+          artworkUrl: video.thumbnail ?? undefined,
+        });
+        player.play();
+      },
+      stopAudio: () => {
+        const player = audioRef.current;
+        const seconds = player.currentTime;
+        const wasPlaying = player.playing;
+        player.pause();
+        player.clearLockScreenControls();
+        // Drop the stream so it stops buffering.
+        player.replace(null);
+        return { seconds, wasPlaying };
+      },
+      resumeVideo: (seconds, wasPlaying) => {
+        ytRef.current?.seekTo(seconds, true);
+        lastVideoTime.current = { seconds, at: Date.now() };
+        if (wasPlaying) lastPlayingAt.current = Date.now();
+        setPlaying(wasPlaying);
+      },
+      onError: (err) => console.warn('Background audio could not start:', err),
+    });
+  }
+
+  useEffect(() => {
+    if (!current) return;
+    const sub = AppState.addEventListener('change', (state) => handoffRef.current?.handleAppState(state));
+    return () => sub.remove();
+  }, [current]);
+
+  // While the video plays on screen, keep noting where it is, so there is a
+  // recent position to continue from the instant the app is backgrounded (the
+  // embed can't be asked once it has been suspended).
+  useEffect(() => {
+    if (!current) return;
+    const timer = setInterval(() => {
+      if (!playingRef.current || AppState.currentState !== 'active') return;
+      ytRef.current
+        ?.getCurrentTime()
+        .then((seconds) => {
+          lastVideoTime.current = { seconds, at: Date.now() };
+          lastPlayingAt.current = Date.now();
+        })
+        .catch(() => {});
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [current]);
+
+  // Closing the player must also silence any audio-only playback.
+  useEffect(() => {
+    if (current) return;
+    const player = audioRef.current;
+    try {
+      player.pause();
+      player.clearLockScreenControls();
+    } catch {
+      // Nothing was playing.
+    }
+  }, [current]);
 
   const url = current?.url || '';
 
@@ -360,6 +464,7 @@ export function PlayerHost() {
             ]}
           >
             <YoutubePlayer
+              ref={ytRef}
               height={playerH}
               width={playerW}
               videoId={videoId}
@@ -367,7 +472,10 @@ export function PlayerHost() {
               onReady={() => setPlayerReady(true)}
               onChangeState={(state: string) => {
                 if (state === 'paused' || state === 'ended') setPlaying(false);
-                if (state === 'playing') setPlaying(true);
+                if (state === 'playing') {
+                  setPlaying(true);
+                  lastPlayingAt.current = Date.now();
+                }
                 // onReady fires only once, when the player first starts. A
                 // video loaded into the already-running player (opened while
                 // minimised) only reports these state changes, so they are

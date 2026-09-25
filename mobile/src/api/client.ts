@@ -148,6 +148,14 @@ export function prewarmPreviews(urls: string[], staggerMs = 500): void {
   });
 }
 
+// Address of the server's audio-only stream for a video (Range-capable, so a
+// player can seek). Used to keep playing when the app leaves the screen.
+export async function getAudioStreamUrl(videoUrl: string): Promise<string> {
+  const base = await getApiBaseUrl();
+  if (!base) throw new ApiNotConfiguredError();
+  return `${base}/api/v1/audio?url=${encodeURIComponent(videoUrl)}`;
+}
+
 export function createJob(url: string, format?: string): Promise<Job> {
   return request('/api/v1/jobs', {
     method: 'POST',
