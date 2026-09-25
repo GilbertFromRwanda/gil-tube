@@ -107,6 +107,7 @@
         position: absolute;
         top: 0.6rem;
         right: 0.6rem;
+        box-sizing: border-box;
         width: 28px;
         height: 28px;
         border-radius: 999px;
@@ -114,6 +115,10 @@
         border: 1px solid var(--border);
         color: var(--muted);
         font-size: 0.85rem;
+        padding: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
       }
       .modal-hint { color: var(--muted); font-size: 0.82rem; line-height: 1.5; margin: 0 0 1rem; }
       .modal-qr {
@@ -141,6 +146,42 @@
         box-sizing: border-box;
       }
       .modal-edit-hint { color: var(--muted); font-size: 0.72rem; margin: 0.4rem 0 0; }
+      .modal-tabs {
+        display: flex;
+        gap: 4px;
+        padding: 3px;
+        margin: 0 0 0.9rem;
+        border-radius: 10px;
+        background: var(--panel-alt);
+        border: 1px solid var(--border);
+      }
+      .modal-tab {
+        flex: 1;
+        padding: 0.45rem 0.5rem;
+        border-radius: 8px;
+        background: transparent;
+        border: 0;
+        color: var(--muted);
+        font-size: 0.8rem;
+        font-weight: 600;
+        box-shadow: none;
+        cursor: pointer;
+      }
+      .modal-tab.active { background: var(--panel); color: var(--text); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18); }
+      .modal-panel.hidden { display: none; }
+      .modal-download {
+        display: block;
+        margin: 0 0 0.9rem;
+        padding: 0.7rem 1rem;
+        border-radius: 10px;
+        background: linear-gradient(180deg, var(--primary), var(--primary-strong));
+        color: #04121f;
+        font-weight: 700;
+        font-size: 0.9rem;
+        text-decoration: none;
+      }
+      .modal-download small { display: block; font-weight: 500; opacity: 0.75; margin-top: 2px; }
+      .modal-download[aria-disabled="true"] { opacity: 0.45; pointer-events: none; }
       .topbar {
         position: sticky;
         top: 0;
@@ -675,7 +716,7 @@
           </div>
           <button id="searchButton" type="submit">Search</button>
         </form>
-        <button id="mobileConnectToggle" class="theme-toggle" type="button" title="Connect the mobile app">📱</button>
+        <button id="mobileConnectToggle" class="theme-toggle" type="button" title="Get the mobile app (install / connect)">📱</button>
         <button id="themeToggle" class="theme-toggle" type="button" title="Toggle light/dark theme">🌙</button>
       </div>
     </header>
@@ -683,12 +724,30 @@
     <div id="mobileConnectModal" class="modal-overlay hidden">
       <div class="modal-card">
         <button id="mobileConnectClose" class="modal-close" type="button" aria-label="Close">✕</button>
-        <h2>Connect the mobile app</h2>
-        <p id="mobileConnectHint" class="modal-hint"></p>
-        <div id="mobileConnectQr" class="modal-qr"></div>
-        <p class="modal-url-label">API address</p>
-        <input id="mobileConnectUrl" class="modal-url" type="text" autocomplete="off" spellcheck="false" />
-        <p class="modal-edit-hint">Not right? Edit it (e.g. swap in your computer's LAN IP) - the QR code updates as you type.</p>
+        <h2>Get the mobile app</h2>
+        <div class="modal-tabs" role="tablist">
+          <button id="tabInstall" class="modal-tab active" type="button" role="tab" aria-selected="true">1 · Install</button>
+          <button id="tabConnect" class="modal-tab" type="button" role="tab" aria-selected="false">2 · Connect</button>
+        </div>
+
+        <div id="panelInstall" class="modal-panel">
+          <p id="installHint" class="modal-hint"></p>
+          <div id="installQr" class="modal-qr"></div>
+          <a id="installLink" class="modal-download" href="app/GilTube.apk" download="GilTube.apk">
+            ⬇ Download the Android app (APK)<small id="installMeta"></small>
+          </a>
+          <p class="modal-url-label">Download address</p>
+          <input id="installUrl" class="modal-url" type="text" autocomplete="off" spellcheck="false" />
+          <p id="installStatus" class="modal-edit-hint"></p>
+        </div>
+
+        <div id="panelConnect" class="modal-panel hidden">
+          <p id="mobileConnectHint" class="modal-hint"></p>
+          <div id="mobileConnectQr" class="modal-qr"></div>
+          <p class="modal-url-label">API address</p>
+          <input id="mobileConnectUrl" class="modal-url" type="text" autocomplete="off" spellcheck="false" />
+          <p class="modal-edit-hint">Not right? Edit it (e.g. swap in your computer's LAN IP) - the QR code updates as you type.</p>
+        </div>
       </div>
     </div>
 
@@ -780,6 +839,16 @@
       const mobileConnectHint = document.getElementById('mobileConnectHint');
       const mobileConnectQr = document.getElementById('mobileConnectQr');
       const mobileConnectUrl = document.getElementById('mobileConnectUrl');
+      const tabInstall = document.getElementById('tabInstall');
+      const tabConnect = document.getElementById('tabConnect');
+      const panelInstall = document.getElementById('panelInstall');
+      const panelConnect = document.getElementById('panelConnect');
+      const installHint = document.getElementById('installHint');
+      const installQr = document.getElementById('installQr');
+      const installLink = document.getElementById('installLink');
+      const installMeta = document.getElementById('installMeta');
+      const installUrl = document.getElementById('installUrl');
+      const installStatus = document.getElementById('installStatus');
       const searchForm = document.getElementById('searchForm');
       const searchInput = document.getElementById('searchInput');
       const searchSuggestions = document.getElementById('searchSuggestions');
@@ -845,14 +914,13 @@
         return qrCodeLibPromise;
       }
 
-      // Renders a QR code for whatever's currently in the address field.
-      // Called both when the modal opens and on every edit, so typing in a
-      // corrected LAN IP (when the page was opened via localhost) updates
-      // the code live instead of requiring a reopen.
-      function renderMobileConnectQr(url) {
+      // Renders a QR code for `url` into `container`. Called when the dialog
+      // opens and on every edit of the address field, so typing in a corrected
+      // LAN IP (when the page was opened via localhost) updates the code live.
+      function renderQrInto(container, url, alt) {
         if (!/^https?:\/\/\S+$/i.test(url)) {
-          mobileConnectQr.innerHTML = '';
-          mobileConnectQr.textContent = 'Type a valid address above to generate a QR code.';
+          container.innerHTML = '';
+          container.textContent = 'Type a valid address below to generate a QR code.';
           return;
         }
         loadQrCodeLib()
@@ -862,32 +930,107 @@
             qr.make();
             const img = document.createElement('img');
             img.src = qr.createDataURL(6);
-            img.alt = 'QR code for the API address';
+            img.alt = alt;
             img.style.maxWidth = '100%';
             img.style.height = 'auto';
-            mobileConnectQr.innerHTML = '';
-            mobileConnectQr.appendChild(img);
+            container.innerHTML = '';
+            container.appendChild(img);
           })
           .catch(() => {
-            mobileConnectQr.innerHTML = '';
-            mobileConnectQr.textContent = 'QR code unavailable (offline?) - use the address above.';
+            container.innerHTML = '';
+            container.textContent = 'QR code unavailable (offline?) - use the address below.';
           });
       }
 
-      function openMobileConnectModal() {
+      function renderMobileConnectQr(url) {
+        renderQrInto(mobileConnectQr, url, 'QR code for the API address');
+      }
+
+      // ---- Install tab: the APK is served by this same web server (see
+      // publish-apk.sh), so a phone on the same network can fetch it by link
+      // or QR code without any internet or store.
+      const APK_PATH = 'app/GilTube.apk';
+
+      function apkDownloadUrl() {
+        return `${window.location.protocol}//${window.location.host}/${APK_PATH}`;
+      }
+
+      function formatApkSize(bytes) {
+        return bytes >= 1048576 ? `${(bytes / 1048576).toFixed(0)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+      }
+
+      async function checkApkAvailable() {
+        try {
+          const response = await fetch(APK_PATH, { method: 'HEAD', cache: 'no-store' });
+          if (!response.ok) return null;
+          const size = Number(response.headers.get('Content-Length')) || 0;
+          const modified = response.headers.get('Last-Modified');
+          const parts = [];
+          if (size) parts.push(formatApkSize(size));
+          if (modified) parts.push(`built ${new Date(modified).toLocaleDateString()}`);
+          return { meta: parts.join(' · ') };
+        } catch (err) {
+          return null;
+        }
+      }
+
+      async function refreshInstallPanel() {
+        const { isLocal } = computeMobileApiUrl();
+        installUrl.value = apkDownloadUrl();
+        installHint.textContent = isLocal
+          ? 'This page is open locally, so the code below only works on this computer. Open this page from your computer\'s LAN IP (start.sh does this for you) or edit the address below, then scan it with your phone camera.'
+          : 'Scan this with your phone\'s camera (same Wi-Fi as this computer) or open the link on the phone, then install the APK. Android will ask you to allow installs from this source.';
+        renderQrInto(installQr, installUrl.value.trim(), 'QR code to download the Android app');
+
+        const found = await checkApkAvailable();
+        installLink.setAttribute('aria-disabled', found ? 'false' : 'true');
+        installMeta.textContent = found ? found.meta : '';
+        installStatus.textContent = found
+          ? 'Edit the address if your phone reaches this computer differently - the QR code updates as you type.'
+          : 'The APK is not on this server yet. Build it with EAS, then run ./publish-apk.sh to copy the latest build here.';
+      }
+
+      function showConnectPanel() {
         const { url, isLocal } = computeMobileApiUrl();
         mobileConnectUrl.value = url;
-        mobileConnectModal.classList.remove('hidden');
 
         mobileConnectHint.textContent = isLocal
           ? 'This page is open locally, so this address only works on this computer. Either edit it below to your computer\'s LAN IP (e.g. http://192.168.1.20:8081 - find it with ipconfig/ifconfig), or reopen this page from that LAN IP so it comes pre-filled correctly.'
           : 'In the Gil Tube app, open Settings and tap "Scan QR" to fill this in automatically - or type the address below by hand.';
 
         renderMobileConnectQr(url);
-        mobileConnectUrl.focus();
-        mobileConnectUrl.select();
       }
 
+      function selectModalTab(name) {
+        const install = name === 'install';
+        tabInstall.classList.toggle('active', install);
+        tabConnect.classList.toggle('active', !install);
+        tabInstall.setAttribute('aria-selected', String(install));
+        tabConnect.setAttribute('aria-selected', String(!install));
+        panelInstall.classList.toggle('hidden', !install);
+        panelConnect.classList.toggle('hidden', install);
+        try {
+          localStorage.setItem('mobileModalTab', name);
+        } catch (err) {
+          // Not remembered in this browser/mode; defaults to Install next time.
+        }
+        if (install) refreshInstallPanel();
+        else showConnectPanel();
+      }
+
+      function openMobileConnectModal() {
+        mobileConnectModal.classList.remove('hidden');
+        let remembered = 'install';
+        try {
+          remembered = localStorage.getItem('mobileModalTab') === 'connect' ? 'connect' : 'install';
+        } catch (err) {
+          // Storage unavailable: start on Install.
+        }
+        selectModalTab(remembered);
+      }
+
+      tabInstall.addEventListener('click', () => selectModalTab('install'));
+      tabConnect.addEventListener('click', () => selectModalTab('connect'));
       mobileConnectToggle.addEventListener('click', openMobileConnectModal);
       mobileConnectClose.addEventListener('click', () => mobileConnectModal.classList.add('hidden'));
       mobileConnectModal.addEventListener('click', (event) => {
@@ -898,6 +1041,15 @@
       mobileConnectUrl.addEventListener('input', () => {
         if (mobileConnectDebounce) clearTimeout(mobileConnectDebounce);
         mobileConnectDebounce = setTimeout(() => renderMobileConnectQr(mobileConnectUrl.value.trim()), 300);
+      });
+
+      let installDebounce = null;
+      installUrl.addEventListener('input', () => {
+        if (installDebounce) clearTimeout(installDebounce);
+        installDebounce = setTimeout(
+          () => renderQrInto(installQr, installUrl.value.trim(), 'QR code to download the Android app'),
+          300
+        );
       });
 
       pasteLinkToggle.addEventListener('click', () => {

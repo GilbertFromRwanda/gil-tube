@@ -85,6 +85,24 @@ This repository is intentionally a working foundation rather than a full product
    `GET /api/v1/jobs/:id/file`, which streams the finished file from the
    downloader's storage through the API.
 
+## Getting the mobile app onto a phone
+
+The web UI's 📱 button opens a two-step dialog: **1 · Install** shows a QR code
+and a download link for the Android APK, and **2 · Connect** shows a QR code the
+app scans to find your API server.
+
+The APK is served by the same web server as the page, so it works on your Wi-Fi
+with no store or internet. It isn't committed (about 100 MB); put the newest
+build there with:
+
+```bash
+cd mobile && eas build --platform android --profile preview   # cloud build
+./publish-apk.sh    # copies the latest finished build into web/app/
+```
+
+Open the web UI from your computer's LAN address (`./start.sh` opens it that
+way) so the QR codes point somewhere your phone can reach.
+
 ## Mobile app
 
 `mobile/` is an Expo (React Native + TypeScript) client that talks to the
