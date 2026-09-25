@@ -444,6 +444,13 @@
         background-size: 200% 100%;
         animation: skeleton-shimmer 1.3s ease-in-out infinite;
       }
+      .feed-end {
+        grid-column: 1 / -1;
+        padding: 1.2rem 0 0.4rem;
+        text-align: center;
+        color: var(--muted);
+        font-size: 0.8rem;
+      }
       .skeleton-thumb { aspect-ratio: 16 / 9; }
       .skeleton-line { height: 10px; border-radius: 5px; margin: 0 0 8px; }
       .skeleton-line.short { width: 55%; margin-bottom: 0; }
@@ -1364,47 +1371,166 @@
         searchResults.removeAttribute('aria-busy');
       }
 
+      // ---- The feed --------------------------------------------------------
+      // One endless list. It starts either as the cached (Redis) videos or as a
+      // live search; when the cached videos run out it carries on with more
+      // results for the query the page was showing, and a live search itself
+      // pages deeper the same way. Repeats are dropped, the next page is
+      // fetched ahead of the scroll, and every new search bumps `feedGeneration`
+      // so a slow reply for an old search can never land in a new list.
+      const SEARCH_FIRST_PAGE = 12; // matches pages already cached at this size
+      const SEARCH_PAGE_SIZE = 24;
+      const MAX_EMPTY_PAGES = 4; // pages in a row that were all repeats before giving up for now
+
+      let feedGeneration = 0;
+      let feedQuery = '';
+      let searchOffset = 0;
+      let searchHasMore = false;
+      let loadingMoreFeed = false;
+      let shownVideoIds = new Set();
+      const pageRequests = new Map(); // `${generation}:${offset}` -> Promise of a page
+
+      // Returns the results not shown yet and remembers them. Pure apart from
+      // the set it is given, which is what makes it testable.
+      function takeNewResults(results, seen) {
+        const fresh = [];
+        for (const result of results) {
+          const id = result && result.id;
+          if (!id || seen.has(id)) continue;
+          seen.add(id);
+          fresh.push(result);
+        }
+        return fresh;
+      }
+
+      function fetchSearchPage(query, offset, limit) {
+        const key = `${feedGeneration}:${offset}`;
+        if (pageRequests.has(key)) return pageRequests.get(key);
+        const request = fetch(`${API_BASE}/api/v1/search`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query, limit, offset }),
+        })
+          .then(async (response) => {
+            const data = await response.json();
+            if (!response.ok) throw new Error(data && data.error ? data.error.message : 'Search failed.');
+            return data;
+          })
+          .catch((err) => {
+            pageRequests.delete(key); // a failed page can be tried again
+            throw err;
+          });
+        pageRequests.set(key, request);
+        return request;
+      }
+
+      function showFeedSkeletons(count = 4) {
+        hideFeedSkeletons();
+        const card = `
+          <div class="skeleton-card feed-skeleton" aria-hidden="true">
+            <div class="skeleton-block skeleton-thumb"></div>
+            <div class="result-info">
+              <div class="skeleton-block skeleton-line"></div>
+              <div class="skeleton-block skeleton-line short"></div>
+            </div>
+          </div>`;
+        searchResults.insertAdjacentHTML('beforeend', card.repeat(count));
+      }
+
+      function hideFeedSkeletons() {
+        searchResults.querySelectorAll('.feed-skeleton').forEach((el) => el.remove());
+      }
+
+      function setFeedEnd(visible) {
+        searchResults.querySelectorAll('.feed-end').forEach((el) => el.remove());
+        if (visible && currentResultsList.length) {
+          searchResults.insertAdjacentHTML('beforeend', '<p class="feed-end">You have reached the end of the results.</p>');
+        }
+      }
+
+      // Anything further to load, from either source.
+      function feedHasMore() {
+        return cachedVideosHasMore || searchHasMore;
+      }
+
+      async function loadMoreFeed() {
+        if (loadingMoreFeed || !feedHasMore()) return;
+        if (cachedVideosHasMore) {
+          await loadMoreCachedVideos();
+          return;
+        }
+
+        const generation = feedGeneration;
+        loadingMoreFeed = true;
+        showFeedSkeletons();
+        try {
+          let emptyPages = 0;
+          while (searchHasMore && emptyPages < MAX_EMPTY_PAGES) {
+            const data = await fetchSearchPage(feedQuery, searchOffset, SEARCH_PAGE_SIZE);
+            if (generation !== feedGeneration) return; // a newer search took over
+            searchOffset = typeof data.next_offset === 'number' ? data.next_offset : searchOffset + SEARCH_PAGE_SIZE;
+            searchHasMore = !!data.has_more;
+
+            const fresh = takeNewResults(data.results || [], shownVideoIds);
+            appendSearchResults(fresh, { alreadyDeduped: true });
+            if (fresh.length) break;
+            emptyPages += 1; // every video on that page was already shown
+          }
+          // Have the next page ready before the scroll gets there.
+          if (searchHasMore && generation === feedGeneration) {
+            fetchSearchPage(feedQuery, searchOffset, SEARCH_PAGE_SIZE).catch(() => {});
+          }
+        } catch (err) {
+          // Transient failure: the next scroll near the bottom tries again.
+        } finally {
+          if (generation === feedGeneration) {
+            hideFeedSkeletons();
+            loadingMoreFeed = false;
+            setFeedEnd(!feedHasMore());
+          }
+        }
+      }
+
       async function runSearch(query) {
         searchError.classList.add('hidden');
         searchError.textContent = '';
         if (!query) return;
 
-        // A live search returns one fixed batch, not a paged feed - disable
-        // cached-video infinite scroll so scrolling here doesn't try to
-        // "load more" of the previous cached view.
+        // A new search starts a new feed: nothing from the old one may leak in.
+        const generation = ++feedGeneration;
+        feedQuery = query;
+        searchOffset = 0;
+        searchHasMore = false;
         cachedVideosHasMore = false;
+        loadingMoreFeed = false;
+        shownVideoIds = new Set();
+        pageRequests.clear();
 
         searchButton.disabled = true;
         searchButton.textContent = 'Searching…';
         showSearchSkeletons();
 
         try {
-          const response = await fetch(`${API_BASE}/api/v1/search`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query, limit: 12 }),
-          });
-          const data = await response.json();
-
-          if (!response.ok) {
-            const message = data && data.error ? data.error.message : 'Search failed.';
-            searchError.textContent = message;
-            searchError.classList.remove('hidden');
-            searchResults.classList.add('hidden');
-            setResultsHeading('');
-            return;
-          }
+          const data = await fetchSearchPage(query, 0, SEARCH_FIRST_PAGE);
+          if (generation !== feedGeneration) return;
 
           setResultsHeading(`Results for "${query}"`);
           renderSearchResults(data.results || []);
+          searchOffset = typeof data.next_offset === 'number' ? data.next_offset : SEARCH_FIRST_PAGE;
+          searchHasMore = !!data.has_more;
         } catch (err) {
-          searchError.textContent = `Connection error: ${err.message}`;
+          if (generation !== feedGeneration) return;
+          const message = err && err.message ? err.message : 'Search failed.';
+          searchError.textContent = /fetch|network/i.test(message) ? `Connection error: ${message}` : message;
           searchError.classList.remove('hidden');
           searchResults.classList.add('hidden');
+          setResultsHeading('');
         } finally {
-          clearSearchSkeletons();
-          searchButton.disabled = false;
-          searchButton.textContent = 'Search';
+          if (generation === feedGeneration) {
+            clearSearchSkeletons();
+            searchButton.disabled = false;
+            searchButton.textContent = 'Search';
+          }
         }
       }
 
@@ -1419,12 +1545,11 @@
       const DEFAULT_SEARCH_QUERY = 'Rwanda SDA music';
       const CACHED_PAGE_SIZE = 24;
 
-      // Infinite scroll only applies to the cached-videos view: a live
-      // search returns one fixed batch from yt-dlp per query, not a paged
-      // feed, so there's nothing to page through there.
+      // The cached-videos view is paged from Redis; once it runs out the feed
+      // carries on with live results for the page's default query (see
+      // loadMoreFeed), so there is no dead end.
       let cachedVideosOffset = 0;
       let cachedVideosHasMore = false;
-      let loadingMoreCached = false;
 
       // Populated from /api/v1/cached-searches' `queries` field and offered
       // as "recent search" suggestions while typing - see wireSearchSuggestions.
@@ -1433,17 +1558,26 @@
       async function loadInitialResults() {
         searchInput.value = DEFAULT_SEARCH_QUERY;
         cachedVideosHasMore = false;
+        const generation = ++feedGeneration;
+        feedQuery = DEFAULT_SEARCH_QUERY;
+        searchOffset = 0;
+        searchHasMore = false;
+        shownVideoIds = new Set();
+        pageRequests.clear();
         showSearchSkeletons();
         try {
           const response = await fetch(`${API_BASE}/api/v1/cached-searches?limit=${CACHED_PAGE_SIZE}&offset=0`);
           if (response.ok) {
             const data = await response.json();
             cachedQueries = data.queries || [];
+            if (generation !== feedGeneration) return;
             if (data.videos && data.videos.length) {
               setResultsHeading('Cached videos');
               renderSearchResults(data.videos);
               cachedVideosOffset = data.videos.length;
               cachedVideosHasMore = !!data.has_more;
+              // When the cache runs out, continue with live results.
+              searchHasMore = true;
               return;
             }
           }
@@ -1520,14 +1654,18 @@
       wireSearchSuggestions();
 
       async function loadMoreCachedVideos() {
-        if (loadingMoreCached || !cachedVideosHasMore) return;
-        loadingMoreCached = true;
+        if (loadingMoreFeed || !cachedVideosHasMore) return;
+        const generation = feedGeneration;
+        loadingMoreFeed = true;
+        showFeedSkeletons();
         try {
           const response = await fetch(
             `${API_BASE}/api/v1/cached-searches?limit=${CACHED_PAGE_SIZE}&offset=${cachedVideosOffset}`
           );
+          if (generation !== feedGeneration) return;
           if (response.ok) {
             const data = await response.json();
+            if (generation !== feedGeneration) return;
             const videos = data.videos || [];
             appendSearchResults(videos);
             cachedVideosOffset += videos.length;
@@ -1536,7 +1674,13 @@
         } catch (err) {
           // Ignore - the user can just scroll again to retry.
         } finally {
-          loadingMoreCached = false;
+          if (generation === feedGeneration) {
+            hideFeedSkeletons();
+            loadingMoreFeed = false;
+            // The cache just ran out: keep the scroll going without waiting for
+            // another gesture, since the list may still be short of the bottom.
+            if (!cachedVideosHasMore) setTimeout(checkInfiniteScroll, 0);
+          }
         }
       }
 
@@ -1547,10 +1691,10 @@
       // covers that case. Both stay attached; only one actually fires scroll
       // events at any given viewport width.
       function checkInfiniteScroll() {
-        if (!cachedVideosHasMore || loadingMoreCached) return;
+        if (!feedHasMore() || loadingMoreFeed) return;
         const nearBottomOfColumn = layoutMain.scrollTop + layoutMain.clientHeight >= layoutMain.scrollHeight - 600;
         const nearBottomOfPage = window.innerHeight + window.scrollY >= document.body.offsetHeight - 600;
-        if (nearBottomOfColumn || nearBottomOfPage) loadMoreCachedVideos();
+        if (nearBottomOfColumn || nearBottomOfPage) loadMoreFeed();
       }
       window.addEventListener('scroll', checkInfiniteScroll);
       layoutMain.addEventListener('scroll', checkInfiniteScroll);
@@ -1588,6 +1732,9 @@
       }
 
       function renderSearchResults(results) {
+        // A fresh list: it defines what has been shown so far.
+        shownVideoIds = new Set();
+        results = takeNewResults(results, shownVideoIds);
         currentResultsList = results.slice();
         if (!results.length) {
           searchResults.innerHTML = '<p class="subtitle">No results.</p>';
@@ -1630,7 +1777,8 @@
         });
       }
 
-      function appendSearchResults(results) {
+      function appendSearchResults(results, { alreadyDeduped = false } = {}) {
+        if (!alreadyDeduped) results = takeNewResults(results, shownVideoIds);
         if (!results.length) return;
         const startIndex = currentResultsList.length;
         currentResultsList = currentResultsList.concat(results);
