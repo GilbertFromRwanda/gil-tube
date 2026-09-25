@@ -1,0 +1,162 @@
+diff --git a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioControlsService.kt b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioControlsService.kt
+index 196a5d5..7f205f5 100644
+--- a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioControlsService.kt
++++ b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioControlsService.kt
+@@ -88,6 +88,8 @@ class AudioControlsService : MediaSessionService() {
+             currentPlayerRef.play()
+           }
+ 
++        ACTION_NEXT -> currentPlayer?.let { emitRemoteCommand(it, "next") }
++        ACTION_PREVIOUS -> currentPlayer?.let { emitRemoteCommand(it, "previous") }
+         ACTION_SEEK_FORWARD -> currentPlayerRef.seekTo(currentPlayerRef.currentPosition + SEEK_INTERVAL_MS)
+         ACTION_SEEK_BACKWARD -> currentPlayerRef.seekTo(currentPlayerRef.currentPosition - SEEK_INTERVAL_MS)
+       }
+@@ -97,6 +99,11 @@ class AudioControlsService : MediaSessionService() {
+     return super.onStartCommand(intent, flags, startId)
+   }
+ 
++  // Gil Tube patch: tell JavaScript the user pressed next / previous.
++  private fun emitRemoteCommand(player: AudioPlayer, command: String) {
++    player.emit("remoteCommand", mapOf("command" to command))
++  }
++
+   private fun ensureForegroundNotification() {
+     val notification = buildNotification() ?: buildPlaceholderNotification()
+     try {
+@@ -204,6 +211,16 @@ class AudioControlsService : MediaSessionService() {
+         currentIndex++
+       }
+ 
++      builder.addAction(
++        NotificationCompat.Action(
++          android.R.drawable.ic_media_previous,
++          "Previous",
++          buildActionPendingIntent(ACTION_PREVIOUS)
++        )
++      )
++      compactViewIndices.add(currentIndex)
++      currentIndex++
++
+       builder.addAction(
+         NotificationCompat.Action(
+           if (session.player.isPlaying) {
+@@ -218,6 +235,16 @@ class AudioControlsService : MediaSessionService() {
+       compactViewIndices.add(currentIndex)
+       currentIndex++
+ 
++      builder.addAction(
++        NotificationCompat.Action(
++          android.R.drawable.ic_media_next,
++          "Next",
++          buildActionPendingIntent(ACTION_NEXT)
++        )
++      )
++      compactViewIndices.add(currentIndex)
++      currentIndex++
++
+       if (currentOptions?.showSeekForward == true) {
+         builder.addAction(
+           NotificationCompat.Action(
+@@ -367,7 +394,9 @@ class AudioControlsService : MediaSessionService() {
+ 
+       appContext?.mainQueue?.launch {
+         val context = appContext?.reactContext ?: return@launch
+-        val sessionPlayer = MetadataInjectingPlayer(resolveSessionPlayer(player, options)).apply {
++        val sessionPlayer = MetadataInjectingPlayer(resolveSessionPlayer(player, options)) { command ->
++          emitRemoteCommand(player, command)
++        }.apply {
+           updateMetadata(metadata)
+         }
+         val session = MediaSession.Builder(context, sessionPlayer)
+@@ -448,7 +477,9 @@ class AudioControlsService : MediaSessionService() {
+       sessionMetadataPlayer = null
+       appContext?.mainQueue?.launch {
+         val context = appContext?.reactContext ?: return@launch
+-        val sessionPlayer = MetadataInjectingPlayer(resolveSessionPlayer(player, options)).apply {
++        val sessionPlayer = MetadataInjectingPlayer(resolveSessionPlayer(player, options)) { command ->
++          emitRemoteCommand(player, command)
++        }.apply {
+           updateMetadata(metadata)
+         }
+         val session = MediaSession.Builder(context, sessionPlayer)
+@@ -555,6 +586,8 @@ class AudioControlsService : MediaSessionService() {
+     private const val ACTION_PLAY = "expo.modules.audio.action.PLAY"
+     private const val ACTION_PAUSE = "expo.modules.audio.action.PAUSE"
+     private const val ACTION_TOGGLE = "expo.modules.audio.action.TOGGLE"
++    private const val ACTION_NEXT = "expo.modules.audio.action.NEXT"
++    private const val ACTION_PREVIOUS = "expo.modules.audio.action.PREVIOUS"
+ 
+     const val ACTION_SEEK_FORWARD = "expo.modules.audio.action.SEEK_FORWARD"
+     const val ACTION_SEEK_BACKWARD = "expo.modules.audio.action.SEEK_BACKWARD"
+diff --git a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioMediaSessionCallback.kt b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioMediaSessionCallback.kt
+index 839aaef..abc6196 100644
+--- a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioMediaSessionCallback.kt
++++ b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioMediaSessionCallback.kt
+@@ -24,11 +24,11 @@ class AudioMediaSessionCallback : MediaSession.Callback {
+             .add(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)
+             .add(Player.COMMAND_SEEK_FORWARD)
+             .add(Player.COMMAND_SEEK_BACK)
+-            // Remove track navigation commands
+-            .remove(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+-            .remove(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+-            .remove(Player.COMMAND_SEEK_TO_PREVIOUS)
+-            .remove(Player.COMMAND_SEEK_TO_NEXT)
++            // Gil Tube patch: keep track navigation; the app handles it
++            .add(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
++            .add(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
++            .add(Player.COMMAND_SEEK_TO_PREVIOUS)
++            .add(Player.COMMAND_SEEK_TO_NEXT)
+             .build()
+         )
+         .setAvailableSessionCommands(
+diff --git a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/MetadataInjectingPlayer.kt b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/MetadataInjectingPlayer.kt
+index 18203a3..ccd781c 100644
+--- a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/MetadataInjectingPlayer.kt
++++ b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/MetadataInjectingPlayer.kt
+@@ -16,7 +16,10 @@ import java.util.IdentityHashMap
+ // metadata updates without replacing the active media item on the real ExoPlayer instance.
+ @UnstableApi
+ internal class MetadataInjectingPlayer(
+-  player: Player
++  player: Player,
++  // Called with "next" or "previous" when the notification / lock screen /
++  // headset asks for another track. Gil Tube patch: the app owns the queue.
++  private val onRemoteCommand: (String) -> Unit
+ ) : ForwardingPlayer(player) {
+   private val handler = Handler(applicationLooper)
+   private val listeners = IdentityHashMap<Player.Listener, Player.Listener>()
+@@ -36,6 +39,34 @@ internal class MetadataInjectingPlayer(
+     super.removeListener(forwardingListener ?: listener)
+   }
+ 
++  // Gil Tube patch: always offer next / previous. ExoPlayer only reports them for
++  // multi-item playlists, and this player holds a single track; the queue lives
++  // in JavaScript.
++  override fun getAvailableCommands(): Player.Commands {
++    return super.getAvailableCommands().buildUpon()
++      .add(Player.COMMAND_SEEK_TO_NEXT)
++      .add(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
++      .add(Player.COMMAND_SEEK_TO_PREVIOUS)
++      .add(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
++      .build()
++  }
++
++  override fun isCommandAvailable(command: Int): Boolean {
++    return availableCommands.contains(command)
++  }
++
++  override fun hasNextMediaItem(): Boolean = true
++
++  override fun hasPreviousMediaItem(): Boolean = true
++
++  override fun seekToNext() = onRemoteCommand("next")
++
++  override fun seekToNextMediaItem() = onRemoteCommand("next")
++
++  override fun seekToPrevious() = onRemoteCommand("previous")
++
++  override fun seekToPreviousMediaItem() = onRemoteCommand("previous")
++
+   override fun getMediaMetadata(): MediaMetadata {
+     val metadata = injectedMetadata
+     return super.getMediaMetadata()
