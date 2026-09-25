@@ -660,6 +660,8 @@ func setupRouterWithDeps(extractorBaseURL, downloaderBaseURL string, httpClient 
 		c.JSON(http.StatusOK, extractResp)
 	})
 
+	registerAudioRoutes(r, extractorBaseURL, httpClient)
+
 	r.POST("/api/v1/search", func(c *gin.Context) {
 		var payload struct {
 			Query   string `json:"query"`
