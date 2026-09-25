@@ -1,21 +1,24 @@
 # How Gil Tube's components fit together
 
-Gil Tube is six small services, each in its own container, plus a static
-web page you open in a browser. Nothing talks to YouTube directly except
-the extractor; nothing writes files to disk except the downloader. Here's
-the wiring.
+Gil Tube is six small services, each in its own container, plus two
+clients: a static web page and an Android app (Expo / React Native). Both
+clients talk to the same `api`. Nothing talks to YouTube directly except the
+extractor (the players embed YouTube's own iframe, which is the one
+exception); nothing writes files to disk except the downloader. Here's the
+wiring.
 
 ## The pieces
 
 | Component      | Language           | Talks on          | Job |
 |-----------------|--------------------|--------------------|-----|
 | `web/`          | HTML/CSS/JS (static) | served on `:3000` by `start.sh` | Browser UI: search, preview, kick off downloads, show progress |
-| `api/`          | Go (gin)           | `:8081` → container `:8080` | Front door. Validates requests, proxies to the extractor, writes jobs to Postgres, publishes to NATS, proxies file downloads/progress from the downloader |
+| `mobile/`       | Expo SDK 57 / React Native (TypeScript) | installed as an APK | Phone client: same search / preview / download as the web, plus a bottom-sheet player with mini bar, next / previous / autoplay, audio-only and background audio, and saving to a chosen folder. Finds the server by scanning a QR code shown in the web UI |
+| `api/`          | Go (gin)           | `:8081` → container `:8080` | Front door. Validates requests, proxies to the extractor, writes jobs to Postgres, publishes to NATS, proxies file downloads/progress from the downloader, and resolves an audio-only stream URL for the phone |
 | `extractor/`    | Python (Flask + yt-dlp, gunicorn) | `:9000` | Resolves a YouTube URL (or search query) into real, direct CDN media URLs via yt-dlp. Caches results in Redis |
 | `downloader/`   | Rust (axum)        | `:8000` | Actually fetches the media bytes from the CDN URL(s), in parallel byte-range chunks, muxes video+audio with ffmpeg, serves the finished file |
 | `worker/`       | Go                 | no inbound port | Listens for `jobs.ready` on NATS, calls the downloader synchronously, writes the terminal status back to Postgres |
 | `postgres`      | Postgres 16        | `:5432` | Source of truth for job records (`jobs` table) |
-| `redis`         | Redis 7            | `:6379` | Cache for extraction/search results (`extract:*`, `search:*` keys) |
+| `redis`         | Redis 7            | `:6379` | Cache for extraction/search results (`extract:*`, `search:*` keys); the `search:*` keys double as the store of past queries for typing suggestions |
 | `nats`          | NATS 2.10 (JetStream flag on) | `:4222` (`:8222` monitoring) | Message bus between `api` and `worker` — just two subjects: `jobs.ready`, `jobs.cancelled` |
 
 All of this is defined in [docker-compose.yml](docker-compose.yml) and
@@ -25,24 +28,38 @@ waits on each service's `/health` before opening the browser.
 ## Request flow 1 — searching / browsing
 
 ```
-browser (web/index.html)
-   │  POST /api/v1/search  { query }
+browser or phone
+   │  POST /api/v1/search  { query, limit, offset, refresh? }
    ▼
 api (Go)
    │  forwards to extractor, unchanged
    ▼
 extractor (Python)
-   │  cache hit?  → return cached JSON (Redis, prefix "search:")
-   │  cache miss? → yt-dlp `ytsearchN:<query>` (extract_flat, fast) → cache it (TTL 6h) → return
+   │  cache hit?  → return cached JSON (Redis, prefix "search:", one key per page)
+   │  cache miss? → yt-dlp (extract_flat, fast) → cache it (TTL 6h) → return
+   │     page 0:  `ytsearchN:<query>`
+   │     deeper:  YouTube's results URL with `playliststart/playlistend`
+   │  depth is capped at 300 results (deeper pages get slow and irrelevant)
    ▼
-api → browser: list of {id, title, thumbnail, duration, ...}
+api → client: { results: [{id, title, thumbnail, duration, ...}], has_more, next_offset }
 ```
 
 `GET /api/v1/cached-searches` is a variant of this: the extractor scans all
 `search:*` Redis keys, flattens/dedupes the videos across every past query,
-and returns a page of them (`offset`/`limit`) — this is what the browser
-loads on first paint and on infinite scroll, before the user has typed
-anything.
+and returns a page of them (`offset`/`limit`) — this is what the clients
+load on first paint, before the user has typed anything.
+
+**Endless scroll.** The clients chain those two sources into one list that
+never dead-ends: cached videos first, then — when the cache runs out — live
+`/search` pages for the query being shown (or the default one), each fetched
+with the `next_offset` the last one returned. They drop repeats, fetch the next
+page ahead of the scroll, and stop when `has_more` is false. On the phone this
+is `mobile/src/feed/feedEngine.ts`; on the web it is the "The feed" block of
+`web/index.html`.
+
+`GET /api/v1/search-suggestions?prefix=` scans the same `search:*` keys for
+past queries starting with what has been typed, for the "recent searches"
+dropdown in both clients.
 
 When the browser renders the top few search results, it also fires
 background `POST /api/v1/preview` calls for the top 3 (see "prewarming"
@@ -131,6 +148,50 @@ api: job must be status=COMPLETED, else 409
    ▼
 api → browser: Content-Disposition: attachment; filename="<video title>.<ext>"
 ```
+
+## Request flow 5 — playing (next, previous, autoplay, audio)
+
+Playing a video makes no API call for the video itself: both clients embed
+YouTube's player. What the app adds is a **queue**: the list a video was
+opened from (the endless feed) becomes the playlist. Next / Previous step
+through it and, at the end of what is loaded, ask the feed for the next page;
+when a video ends and Autoplay is on, the next one starts. Previous restarts
+the video if you are more than 3 s in. If another search replaces the list
+meanwhile, the queue keeps going through the list playback started from.
+
+On the phone only, audio can take over from the video:
+
+```
+phone (expo-audio)
+   │  GET /api/v1/audio?url=<youtube url>
+   ▼
+api (audio.go)
+   │  extractor /api/v1/extract → pick the best playable audio format
+   │  (host must be an allowed YouTube CDN host) → proxy the bytes
+   │  through, passing `Range` along so seeking works
+   ▼
+phone: plays it as a normal media session (lock-screen controls, keeps
+       going with the screen off)
+```
+
+That happens either automatically (the app leaves the screen while a video
+plays; it hands back to the video, at the right second, on return) or because
+the user switched on **Audio only**, in which case audio stays on and follows
+the queue when a track ends. The decision logic is in
+`mobile/src/player/handoff.ts`, the queue in `mobile/src/player/queue.ts`.
+
+## How the phone finds the server
+
+The web UI shows a QR code containing the API's LAN address; the phone scans
+it (camera) and remembers it. The API answers CORS for any origin and the app
+is allowed cleartext HTTP, since the server lives on your own network.
+
+## Getting the app to the phone
+
+`./build-apk.sh` runs an EAS cloud build (build number auto-incremented,
+version + commit embedded), downloads the APK into `web/app/` (git-ignored)
+and updates `web/app/versions.json`; the web UI's 📱 panel lists those builds
+with a download link and QR code.
 
 ## Why the pieces are split this way
 
