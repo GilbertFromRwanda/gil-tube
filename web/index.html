@@ -2104,6 +2104,10 @@
       function startJobTracking(jobId) {
         currentJobId = jobId;
         jobCard.classList.remove('hidden');
+        // The progress card sits below the preview, often off screen: bring it
+        // into view (only as far as needed) so the download visibly started.
+        const calm = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        requestAnimationFrame(() => jobCard.scrollIntoView({ behavior: calm ? 'auto' : 'smooth', block: 'nearest' }));
         resultRow.classList.add('hidden');
         resultRow.innerHTML = '';
         cancelButton.classList.remove('hidden');
