@@ -661,6 +661,7 @@ func setupRouterWithDeps(extractorBaseURL, downloaderBaseURL string, httpClient 
 	})
 
 	registerAudioRoutes(r, extractorBaseURL, httpClient)
+	registerSpeedTestRoutes(r)
 
 	r.POST("/api/v1/search", func(c *gin.Context) {
 		var payload struct {
