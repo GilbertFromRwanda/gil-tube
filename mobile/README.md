@@ -79,6 +79,12 @@ The address is saved locally (AsyncStorage) and reused on future launches.
   JS as a `remoteCommand` event (handled in `PlayerHost`). It fails the build if
   expo-audio's code no longer matches, e.g. after an upgrade - update the
   plugin then. Not active in Expo Go.
+- `src/utils/autoFormat.ts` — **Auto download quality.** The format picker
+  defaults to Auto: times the connection (`GET /api/v1/speedtest`) and picks
+  the highest resolution that fits it (real file size when known, typical
+  bitrate otherwise), remembering the speed reading for two minutes. Pure
+  logic, unit-tested: `npm run test:auto`. The web UI has the same rules in
+  `web/index.html` - keep the two in step.
 - `src/downloads/DownloadsContext.tsx` — app-level store of download jobs
   with one shared poller (job + progress once a second, stopped when
   nothing is running), so progress survives closing the preview sheet.
