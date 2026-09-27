@@ -20,12 +20,13 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import YoutubePlayer, { YoutubeIframeRef } from 'react-native-youtube-iframe';
-import { createJob, getAudioStreamUrl, getCachedPreview, preview } from '../api/client';
+import { createJob, getAudioStreamUrl, getCachedPreview, preview, speedMeter } from '../api/client';
 import { PreviewInfo } from '../api/types';
 import { isActive, useDownloads } from '../downloads/DownloadsContext';
 import { createHandoff, Handoff } from '../player/handoff';
 import { usePlayer } from '../player/PlayerContext';
 import { useTheme } from '../theme/theme';
+import { AUTO_FORMAT, chooseFormat, formatMbps } from '../utils/autoFormat';
 import { formatDuration, formatLabel } from '../utils/format';
 import { DownloadPanel } from './DownloadPanel';
 import { SkeletonBlock } from './SkeletonBlock';
@@ -75,7 +76,10 @@ export function PlayerHost() {
   const [info, setInfo] = useState<PreviewInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [selectedFormat, setSelectedFormat] = useState('');
+  // AUTO_FORMAT = pick by connection speed; '' = best available; otherwise a format id.
+  const [selectedFormat, setSelectedFormat] = useState(AUTO_FORMAT);
+  const [mbps, setMbps] = useState<number | null>(speedMeter.last());
+  const [testingSpeed, setTestingSpeed] = useState(false);
   const [starting, setStarting] = useState(false);
   const [playing, setPlaying] = useState(true);
   const [playerReady, setPlayerReady] = useState(false);
@@ -335,7 +339,7 @@ export function PlayerHost() {
     setLoading(!cachedInfo);
     setPlayerReady(false);
     setError('');
-    setSelectedFormat('');
+    setSelectedFormat(AUTO_FORMAT);
     setStarting(false);
     setJobId(null);
 
@@ -381,6 +385,23 @@ export function PlayerHost() {
     };
     // Only re-run when a different video is opened.
   }, [url]);
+
+  // Once the formats are showing, check how fast the connection to the server is
+  // (remembered for a couple of minutes), so "Auto" can say what it will pick.
+  const haveInfo = !!info;
+  useEffect(() => {
+    if (!current || !haveInfo) return;
+    let cancelled = false;
+    setTestingSpeed(true);
+    speedMeter.get().then((value) => {
+      if (cancelled) return;
+      setMbps(value);
+      setTestingSpeed(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [url, haveInfo]);
 
   // Failsafe: if a video never reports a state (an embed error, say), don't
   // leave the thumbnail cover and spinner over the player forever.
@@ -475,6 +496,14 @@ export function PlayerHost() {
     .filter((f) => f.id && (f.height || f.container))
     .sort((a, b) => (b.height || 0) - (a.height || 0));
 
+  // What "Auto" would download on this connection.
+  const autoPick = chooseFormat(info?.formats || [], mbps, info?.duration ?? current.duration);
+  const autoLabel = autoPick
+    ? `Auto - ${autoPick.format.height}p for your connection`
+    : testingSpeed
+      ? 'Auto - checking your connection...'
+      : 'Auto - best available';
+
   const jobItem = jobId ? items.find((item) => item.jobId === jobId) : undefined;
   const jobActive = jobItem ? isActive(jobItem) : false;
 
@@ -482,7 +511,15 @@ export function PlayerHost() {
     setStarting(true);
     setError('');
     try {
-      const created = await createJob(url, selectedFormat || undefined);
+      let format: string | undefined = selectedFormat || undefined;
+      if (selectedFormat === AUTO_FORMAT) {
+        // Use the latest speed reading; if it can't be measured, fall back to the
+        // server's own "best available".
+        const speed = await speedMeter.get();
+        setMbps(speed);
+        format = chooseFormat(info?.formats || [], speed, info?.duration ?? current.duration)?.format.id;
+      }
+      const created = await createJob(url, format);
       track(created, title);
       setJobId(created.job_id);
       setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 150);
@@ -675,12 +712,24 @@ export function PlayerHost() {
                     dropdownIconColor={colors.text}
                     itemStyle={{ color: colors.text }}
                   >
+                    <Picker.Item label={autoLabel} value={AUTO_FORMAT} color={colors.text} />
                     <Picker.Item label="Best available" value="" color={colors.text} />
                     {formats.map((format) => (
                       <Picker.Item key={format.id} label={formatLabel(format)} value={format.id} color={colors.text} />
                     ))}
                   </Picker>
                 </View>
+                {selectedFormat === AUTO_FORMAT ? (
+                  <Text style={[styles.formatHint, { color: colors.muted }]}>
+                    {mbps !== null
+                      ? `Your connection to the server: about ${formatMbps(mbps)}.${
+                          autoPick ? ` Downloads ${formatLabel(autoPick.format)}.` : ''
+                        }`
+                      : testingSpeed
+                        ? 'Checking how fast your connection is...'
+                        : "Couldn't test the connection, so the best available quality is used."}
+                  </Text>
+                ) : null}
 
                 <Pressable
                   disabled={starting || jobActive}
@@ -904,6 +953,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   skelLabel: { width: 60, height: 12, marginTop: 18, marginBottom: 8, borderRadius: 6 },
+  formatHint: { fontSize: 12, marginTop: 6, marginBottom: 2 },
   skelPicker: { height: Platform.OS === 'ios' ? 170 : 48 },
   skelButton: { height: 46, marginTop: 22 },
   downloadButton: { marginTop: 22, borderRadius: 10, paddingVertical: 13, alignItems: 'center' },

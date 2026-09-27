@@ -7,6 +7,7 @@ import {
   PreviewInfo,
   SearchResponse,
 } from './types';
+import { createSpeedMeter, SpeedSample } from '../utils/autoFormat';
 
 const API_BASE_STORAGE_KEY = 'gil_tube_api_base_url';
 
@@ -155,6 +156,32 @@ export async function getAudioStreamUrl(videoUrl: string): Promise<string> {
   if (!base) throw new ApiNotConfiguredError();
   return `${base}/api/v1/audio?url=${encodeURIComponent(videoUrl)}`;
 }
+
+// How fast can this phone pull data from the server right now? Times a short
+// download of filler bytes (timing starts once the response begins, so the
+// round trip doesn't count against the speed). A test that doesn't finish in time
+// counts as "no faster than this", which is slow enough to pick a low quality.
+export async function timeSpeedTest(bytes = 768 * 1024, timeoutMs = 5000): Promise<SpeedSample> {
+  const base = await getApiBaseUrl();
+  if (!base) throw new ApiNotConfiguredError();
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`${base}/api/v1/speedtest?bytes=${bytes}`, { signal: controller.signal });
+    const bodyStarted = Date.now();
+    const body = await response.arrayBuffer();
+    return { bytes: body.byteLength, ms: Math.max(1, Date.now() - bodyStarted) };
+  } catch (err) {
+    if (controller.signal.aborted) return { bytes, ms: timeoutMs };
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// One shared meter: the answer is remembered for a couple of minutes.
+export const speedMeter = createSpeedMeter(() => timeSpeedTest());
 
 export function createJob(url: string, format?: string): Promise<Job> {
   return request('/api/v1/jobs', {
