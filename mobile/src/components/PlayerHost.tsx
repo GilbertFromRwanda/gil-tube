@@ -93,6 +93,13 @@ export function PlayerHost() {
   // when the app returns). See player/handoff.ts for the rules; this wires it
   // to the real player, audio engine and app state.
   const ytRef = useRef<YoutubeIframeRef | null>(null);
+  // Forces the YouTube embed to remount (and load videoId fresh) when the app
+  // returns to the screen and finds it stuck on a stale video - see
+  // resumeVideo below.
+  const [playerKey, setPlayerKey] = useState(0);
+  // A resume (seconds, playing) to apply once that remounted embed reports
+  // it's ready, since it can't be seeked/played before then.
+  const pendingResumeRef = useRef<{ seconds: number; wasPlaying: boolean } | null>(null);
   const audio = useAudioPlayer(null);
   const audioRef = useRef(audio);
   audioRef.current = audio;
@@ -141,7 +148,15 @@ export function PlayerHost() {
         if (!video) throw new Error('no video open');
         const player = audioRef.current;
         player.replace({ uri: await getAudioStreamUrl(video.url) });
-        await player.seekTo(fromSeconds);
+        // Start buffering/playing right away instead of waiting for a seek to
+        // finish first - one fewer native round trip before sound can start.
+        // A non-zero resume position (returning from the background) is
+        // applied on top without blocking that; starting fresh (autoplay,
+        // next/previous) has nothing to seek to, so it's skipped entirely.
+        player.play();
+        if (fromSeconds > 0.25) {
+          player.seekTo(fromSeconds).catch((err) => console.warn('Could not resume at the right position:', err));
+        }
         if (!IS_EXPO_GO) {
           const metadata = {
             title: video.title,
@@ -160,7 +175,6 @@ export function PlayerHost() {
             lockScreenActive.current = true;
           }
         }
-        player.play();
       },
       stopAudio: () => {
         // Each native call is isolated: this runs when the app returns to the
@@ -193,12 +207,38 @@ export function PlayerHost() {
         return { seconds, wasPlaying };
       },
       resumeVideo: (seconds, wasPlaying) => {
-        if (Number.isFinite(seconds)) {
-          ytRef.current?.seekTo(seconds, true);
-          lastVideoTime.current = { seconds, at: Date.now() };
-        }
+        const validSeconds = Number.isFinite(seconds);
+        if (validSeconds) lastVideoTime.current = { seconds, at: Date.now() };
         if (wasPlaying) lastPlayingAt.current = Date.now();
         setPlaying(wasPlaying);
+
+        // The embed can fail to pick up video changes made while the app was
+        // backgrounded (autoplay advancing tracks with the screen off - the
+        // WebView isn't guaranteed to apply a videoId change while suspended),
+        // leaving it stuck on a stale video. Confirm it's actually showing the
+        // video whose audio was just playing before trusting a plain seek.
+        const expectedId = currentRef.current?.id;
+        if (!expectedId) {
+          if (validSeconds) ytRef.current?.seekTo(seconds, true);
+          return;
+        }
+        ytRef.current
+          ?.getVideoUrl()
+          .then((videoUrl) => {
+            if (currentRef.current?.id !== expectedId) return; // moved on again already
+            if (videoUrl && videoUrl.includes(expectedId)) {
+              if (validSeconds) ytRef.current?.seekTo(seconds, true);
+            } else {
+              // Stuck on a stale video: remount the embed with the right id
+              // and apply the resume once it reports ready (onReady, below).
+              pendingResumeRef.current = { seconds: validSeconds ? seconds : 0, wasPlaying };
+              setPlayerKey((k) => k + 1);
+            }
+          })
+          .catch(() => {
+            // Couldn't confirm either way; a plain seek is the safe default.
+            if (validSeconds) ytRef.current?.seekTo(seconds, true);
+          });
       },
       // The audio track ended: autoplay moves to the next video (which the
       // handoff then follows with audio). With autoplay off, or nothing next,
@@ -772,12 +812,21 @@ export function PlayerHost() {
             ]}
           >
             <YoutubePlayer
+              key={playerKey}
               ref={ytRef}
               height={playerH}
               width={playerW}
               videoId={videoId}
               play={playing}
-              onReady={() => setPlayerReady(true)}
+              onReady={() => {
+                setPlayerReady(true);
+                const pending = pendingResumeRef.current;
+                if (pending) {
+                  pendingResumeRef.current = null;
+                  ytRef.current?.seekTo(pending.seconds, true);
+                  setPlaying(pending.wasPlaying);
+                }
+              }}
               onChangeState={(state: string) => {
                 if (state === 'paused' || state === 'ended') setPlaying(false);
                 if (state === 'ended' && autoplayRef.current && !audioMode && endedFor.current !== current.id) {
