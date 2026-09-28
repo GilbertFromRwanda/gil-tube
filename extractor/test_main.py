@@ -86,6 +86,56 @@ def test_extract_uses_cache_on_second_call():
         assert mocked.call_count == 1
 
 
+def test_extract_coalesces_concurrent_requests_for_the_same_url():
+    """Two requests for the same URL that overlap in time must only run
+    yt-dlp once; the second gets the first's result instead of re-extracting."""
+    import threading
+    import time as time_module
+
+    main.cache = main.build_cache_from_env()
+    release = threading.Event()
+
+    def slow_extraction(url):
+        release.wait(5)
+        return FAKE_INFO
+
+    results = {}
+
+    def call(name):
+        client = main.app.test_client()
+        results[name] = client.post('/api/v1/extract', json={'url': 'https://www.youtube.com/watch?v=coalesce'})
+
+    with patch.object(main, 'validate_public_http_url', side_effect=lambda u: u), \
+         patch.object(main, 'run_extraction', side_effect=slow_extraction) as mocked:
+        t1 = threading.Thread(target=call, args=('first',))
+        t1.start()
+        # Give the first request time to become the leader and start "extracting".
+        time_module.sleep(0.2)
+        t2 = threading.Thread(target=call, args=('second',))
+        t2.start()
+        time_module.sleep(0.1)
+        release.set()
+        t1.join(5)
+        t2.join(5)
+
+        assert results['first'].status_code == 200
+        assert results['second'].status_code == 200
+        assert results['first'].get_json()['title'] == 'Example'
+        assert results['second'].get_json()['title'] == 'Example'
+        assert mocked.call_count == 1
+
+
+def test_extract_leadership_bookkeeping_is_cleared_after_use():
+    # Regression check for the coalescing added above: it must not leak an
+    # entry that would make every future request for this URL wait forever.
+    main.cache = main.build_cache_from_env()
+    with patch.object(main, 'validate_public_http_url', side_effect=lambda u: u), \
+         patch.object(main, 'run_extraction', return_value=FAKE_INFO):
+        client = main.app.test_client()
+        client.post('/api/v1/extract', json={'url': 'https://www.youtube.com/watch?v=cleanup'})
+    assert main.cache_key('https://www.youtube.com/watch?v=cleanup') not in main._inflight
+
+
 def test_extract_maps_timeout_to_extraction_timeout_code():
     import concurrent.futures
 
