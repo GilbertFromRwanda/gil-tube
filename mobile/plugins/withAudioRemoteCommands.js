@@ -1,24 +1,43 @@
-// Config plugin: makes expo-audio's Android media session offer Next / Previous
-// (notification, lock screen, headset buttons) and report presses to JavaScript
-// as a 'remoteCommand' event on the player.
+// Config plugin: two changes to expo-audio's Android media session that it
+// doesn't support out of the box.
 //
-// Why: expo-audio's session removes the track-navigation commands and its
-// single-track player never advertises them, so Android draws Previous / Next
-// greyed out. The play queue lives in JS (src/player/queue.ts), so the native
-// side only needs to say "next" / "previous" was pressed.
+// 1. Next / Previous on the notification, lock screen and headset buttons.
+//    expo-audio's session removes the track-navigation commands and its
+//    single-track player never advertises them, so Android draws Previous /
+//    Next greyed out. The play queue lives in JS (src/player/queue.ts), so
+//    the native side only needs to say "next" / "previous" was pressed.
 //
-// It edits the three Kotlin files in node_modules/expo-audio while the native
-// project is generated (EAS runs this before compiling). It is idempotent, and
-// it THROWS if expo-audio's code no longer matches (e.g. after an upgrade), so a
-// build can never silently ship without the buttons working.
+// 2. A progress bar on the notification. expo-audio only learns a track's
+//    duration once the player has parsed enough of the stream, which can be
+//    well after the notification first appears - until then Android has
+//    nothing to draw and the progress line stays empty. The app already
+//    knows the video's length (from search results) before playback starts,
+//    so this lets it pass that through as a hint (Metadata.durationMs) that
+//    the notification can show immediately.
+//
+// It edits five files (three Kotlin, one Kotlin record, one .d.ts) in
+// node_modules/expo-audio while the native project is generated (EAS runs
+// this before compiling, and it also runs on `expo prebuild` locally). It is
+// idempotent, and it THROWS if expo-audio's code no longer matches (e.g.
+// after an upgrade), so a build can never silently ship without these.
+//
+// expo-audio also ships a precompiled AAR for Android and, by default,
+// autolinking links THAT instead of compiling this (patched) source - so
+// none of this has any effect unless the app's package.json also forces
+// expo-audio to build from source:
+//   "expo": { "autolinking": { "android": { "buildFromSource": ["expo-audio"] } } }
+// (already set in mobile/package.json). Verify with `cd android && ./gradlew
+// projects`: expo-audio must appear as a real project pointing at
+// node_modules/expo-audio/android, not be missing from the list.
 const { withDangerousMod } = require('@expo/config-plugins');
 const fs = require('fs');
 const path = require('path');
 
 const MARKER = 'Gil Tube patch';
 
-const EDITS = {
-  'MetadataInjectingPlayer.kt': [
+// Paths are relative to expo-audio's package root.
+const FILES = {
+  'android/src/main/java/expo/modules/audio/service/MetadataInjectingPlayer.kt': [
     [
       `internal class MetadataInjectingPlayer(
   player: Player
@@ -62,9 +81,20 @@ const EDITS = {
 
   override fun getMediaMetadata(): MediaMetadata {`,
     ],
+    [
+      `      .setArtworkUri(metadata?.artworkUrl?.toString()?.toUri())
+      .setArtworkData(null, null)
+      .build()`,
+      `      .setArtworkUri(metadata?.artworkUrl?.toString()?.toUri())
+      .setArtworkData(null, null)
+      // Gil Tube patch: a duration hint from the app, shown on the notification
+      // before (or in case) the player itself has parsed one from the stream.
+      .setDurationMs(metadata?.durationMs)
+      .build()`,
+    ],
   ],
 
-  'AudioMediaSessionCallback.kt': [
+  'android/src/main/java/expo/modules/audio/service/AudioMediaSessionCallback.kt': [
     [
       `            // Remove track navigation commands
             .remove(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
@@ -81,7 +111,7 @@ const EDITS = {
     ],
   ],
 
-  'AudioControlsService.kt': [
+  'android/src/main/java/expo/modules/audio/service/AudioControlsService.kt': [
     [
       `        ACTION_SEEK_FORWARD -> currentPlayerRef.seekTo(currentPlayerRef.currentPosition + SEEK_INTERVAL_MS)`,
       `        ACTION_NEXT -> currentPlayer?.let { emitRemoteCommand(it, "next") }
@@ -151,18 +181,61 @@ const EDITS = {
 `,
     ],
   ],
+
+  'android/src/main/java/expo/modules/audio/AudioRecords.kt': [
+    [
+      `@OptimizedRecord
+class Metadata(
+  @Field val title: String?,
+  @Field val artist: String?,
+  @Field val albumTitle: String?,
+  @Field val artworkUrl: URL?
+) : Record`,
+      `@OptimizedRecord
+class Metadata(
+  @Field val title: String?,
+  @Field val artist: String?,
+  @Field val albumTitle: String?,
+  @Field val artworkUrl: URL?,
+  // Gil Tube patch: a duration hint (ms) shown on the notification before the
+  // player itself has parsed one from the stream. See MetadataInjectingPlayer.
+  @Field val durationMs: Long? = null
+) : Record`,
+    ],
+  ],
+
+  // JS/TS is not compiled by Gradle, so buildFromSource doesn't matter here -
+  // Metro bundles straight from node_modules, and this runs before that.
+  'build/Audio.types.d.ts': [
+    [
+      `export type AudioMetadata = {
+    title?: string;
+    artist?: string;
+    albumTitle?: string;
+    artworkUrl?: string;
+};`,
+      `export type AudioMetadata = {
+    title?: string;
+    artist?: string;
+    albumTitle?: string;
+    artworkUrl?: string;
+    /** Gil Tube patch: duration hint (ms) for the notification's progress bar. */
+    durationMs?: number;
+};`,
+    ],
+  ],
 };
 
 function count(haystack, needle) {
   return haystack.split(needle).length - 1;
 }
 
-// Applies the edits under `serviceDir` (…/expo/modules/audio/service). Returns the
-// names of files changed; throws if a file doesn't look as expected.
-function applyEdits(serviceDir) {
+// Applies the edits under `packageDir` (expo-audio's package root). Returns
+// the paths changed; throws if a file doesn't look as expected.
+function applyEdits(packageDir) {
   const changed = [];
-  for (const [name, edits] of Object.entries(EDITS)) {
-    const file = path.join(serviceDir, name);
+  for (const [relPath, edits] of Object.entries(FILES)) {
+    const file = path.join(packageDir, relPath);
     if (!fs.existsSync(file)) throw new Error(`withAudioRemoteCommands: ${file} not found (expo-audio layout changed?)`);
     const original = fs.readFileSync(file, 'utf8');
     const usesCrlf = original.includes('\r\n');
@@ -173,28 +246,28 @@ function applyEdits(serviceDir) {
       const found = count(text, from);
       if (found !== expected) {
         throw new Error(
-          `withAudioRemoteCommands: expected ${expected} match(es) in ${name} but found ${found} for:\n${from.slice(0, 120)}\n` +
+          `withAudioRemoteCommands: expected ${expected} match(es) in ${relPath} but found ${found} for:\n${from.slice(0, 120)}\n` +
             'expo-audio changed; update plugins/withAudioRemoteCommands.js.',
         );
       }
       text = text.split(from).join(to);
     }
     fs.writeFileSync(file, usesCrlf ? text.replace(/\n/g, '\r\n') : text);
-    changed.push(name);
+    changed.push(relPath);
   }
   return changed;
 }
 
-function serviceDirFor(projectRoot) {
+function packageDirFor(projectRoot) {
   const pkg = require.resolve('expo-audio/package.json', { paths: [projectRoot] });
-  return path.join(path.dirname(pkg), 'android/src/main/java/expo/modules/audio/service');
+  return path.dirname(pkg);
 }
 
 const withAudioRemoteCommands = (config) =>
   withDangerousMod(config, [
     'android',
     (cfg) => {
-      const changed = applyEdits(serviceDirFor(cfg.modRequest.projectRoot));
+      const changed = applyEdits(packageDirFor(cfg.modRequest.projectRoot));
       console.log(
         changed.length
           ? `withAudioRemoteCommands: patched expo-audio (${changed.join(', ')})`
@@ -206,4 +279,4 @@ const withAudioRemoteCommands = (config) =>
 
 module.exports = withAudioRemoteCommands;
 module.exports.applyEdits = applyEdits;
-module.exports.serviceDirFor = serviceDirFor;
+module.exports.packageDirFor = packageDirFor;
