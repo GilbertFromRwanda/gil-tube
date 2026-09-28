@@ -108,9 +108,12 @@ player. Searching for something else while a video plays doesn't change what
 Next does: it carries on with the list you started from. The phone app also has
 an **Audio only** switch: it plays the audio stream (`/api/v1/audio`) instead of
 the video, keeps going with the screen off, and moves through the queue when a
-track ends. The lock-screen buttons are play/pause and seek only (expo-audio
-does not offer next/previous there). Tests: `node scripts/test-web-queue.mjs`
-(web), `npm run test:queue` and `npm run test:handoff` in `mobile/`.
+track ends. Android's notification/lock-screen controls also offer **Next** and
+**Previous** there (`mobile/plugins/withAudioRemoteCommands.js` - expo-audio
+doesn't expose track navigation itself, since its player only ever holds one
+track; the plugin makes its media session offer next/previous and forwards
+presses to the same queue). Tests: `node scripts/test-web-queue.mjs` (web),
+`npm run test:queue` and `npm run test:handoff` in `mobile/`.
 
 ## Auto download quality
 
