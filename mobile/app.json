@@ -10,7 +10,11 @@
       "supportsTablet": true,
       "infoPlist": {
         "UIFileSharingEnabled": true,
-        "LSSupportsOpeningDocumentsInPlace": true
+        "LSSupportsOpeningDocumentsInPlace": true,
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        },
+        "NSLocalNetworkUsageDescription": "Gil Tube connects to your Gil Tube server on your local network."
       },
       "bundleIdentifier": "com.giltube.app"
     },
