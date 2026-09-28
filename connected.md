@@ -82,7 +82,12 @@ api → browser: { title, duration, formats: [...] }
 
 This is the slow path (real extraction, not `extract_flat`), which is why
 the UI prewarms it for likely-to-be-clicked results ahead of time and
-caches it in Redis so a second click on the same video is instant.
+caches it in Redis so a second click on the same video is instant. The audio
+endpoint (below) hits this same `/api/v1/extract` cache, so the extractor also
+coalesces concurrent misses for the same URL within a worker process (one
+request actually runs yt-dlp; others wait on it) rather than running it twice
+for, say, a video's formats loading and its background audio starting at
+nearly the same time.
 
 ## Request flow 3 — downloading
 
