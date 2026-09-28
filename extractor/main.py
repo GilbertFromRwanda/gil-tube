@@ -2,6 +2,7 @@ import concurrent.futures
 import json as jsonlib
 import logging
 import os
+import threading
 import time
 import urllib.parse
 
@@ -108,6 +109,56 @@ def build_format_entry(fmt):
     }
 
 
+class ExtractionFailure(Exception):
+    """Carries the same (code, message, status, retryable) shape error_response()
+    takes, so the slow work (_extract_result) and the HTTP layer around it
+    (coalescing, caching) can stay separate."""
+
+    def __init__(self, code, message, status, retryable=False):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.status = status
+        self.retryable = retryable
+
+
+# Coalesces concurrent extractions of the same URL within this process: yt-dlp
+# full extraction is the slow part of a cold request (several seconds even on
+# a plain cache miss), and without this, e.g. loading a video's formats and
+# starting background audio for it at nearly the same time - or two people
+# opening the same video - would each run it independently. One request
+# becomes the "leader" and actually calls yt-dlp; the rest wait on an Event
+# and then read the result the leader wrote to the cache. Only coalesces
+# requests that land on this worker process; with multiple gunicorn workers,
+# a request on a different one still runs its own extraction (a cross-process
+# lock would need Redis - not worth the complexity for what is purely a speed
+# optimization, never a correctness requirement, since every path still falls
+# back to extracting it itself).
+_inflight_lock = threading.Lock()
+_inflight: dict[str, threading.Event] = {}
+
+
+def _acquire_leadership(key: str):
+    """Returns (event, is_leader). Followers wait on the event, then re-check
+    the cache."""
+    with _inflight_lock:
+        event = _inflight.get(key)
+        if event is not None:
+            return event, False
+        event = threading.Event()
+        _inflight[key] = event
+        return event, True
+
+
+def _release_leadership(key: str, event: threading.Event):
+    with _inflight_lock:
+        # Only the leader that registered this exact event clears the entry -
+        # guards against a bizarre reentrant case clobbering a newer leader's.
+        if _inflight.get(key) is event:
+            del _inflight[key]
+    event.set()
+
+
 def run_extraction(url: str):
     ydl_opts = {
         "quiet": True,
@@ -196,6 +247,50 @@ def health():
     return jsonify({"status": "ok", "service": "extractor"})
 
 
+def _extract_result(url: str) -> dict:
+    """Runs yt-dlp and returns the cacheable result dict, or raises
+    ExtractionFailure. Doesn't touch the cache - the caller decides that,
+    since a coalesced follower must not re-cache what its leader already did."""
+    started = time.monotonic()
+    try:
+        info = extract_with_timeout(url, EXTRACT_TIMEOUT_SECONDS)
+    except concurrent.futures.TimeoutError:
+        log_event("extract_timeout", url=url)
+        raise ExtractionFailure(
+            "EXTRACTION_TIMEOUT", "The source could not be processed before the timeout.", 504, retryable=True
+        )
+    except DownloadError as err:
+        code, message, retryable = classify_download_error(err)
+        log_event("extract_failed", url=url, code=code)
+        raise ExtractionFailure(code, message, 502 if retryable else 422, retryable=retryable)
+    except Exception as err:  # unexpected extractor failure
+        log_event("extract_error", url=url, error=str(err))
+        raise ExtractionFailure("EXTRACTION_FAILED", "The source could not be processed.", 502, retryable=True)
+
+    duration_ms = int((time.monotonic() - started) * 1000)
+
+    if info is None:
+        raise ExtractionFailure("EXTRACTION_FAILED", "The source could not be processed.", 502, retryable=True)
+
+    if info.get("is_live"):
+        raise ExtractionFailure("UNSUPPORTED_SOURCE", "Live streams are not supported.", 422)
+
+    formats = [build_format_entry(f) for f in info.get("formats", []) if is_downloadable_format(f)]
+    if not formats:
+        raise ExtractionFailure("FORMAT_UNAVAILABLE", "No downloadable formats were found.", 422)
+
+    result = {
+        "id": info.get("id"),
+        "title": info.get("title"),
+        "duration": info.get("duration"),
+        "thumbnail": info.get("thumbnail"),
+        "uploader": info.get("uploader") or info.get("channel"),
+        "formats": formats,
+    }
+    log_event("extract_completed", url=url, duration_ms=duration_ms, format_count=len(formats))
+    return result
+
+
 @app.post("/api/v1/extract")
 def extract():
     payload = request.get_json(silent=True) or {}
@@ -213,49 +308,38 @@ def extract():
         log_event("extract_cache_hit", url=url)
         return jsonify(cached)
 
-    started = time.monotonic()
-    try:
-        info = extract_with_timeout(url, EXTRACT_TIMEOUT_SECONDS)
-    except concurrent.futures.TimeoutError:
-        log_event("extract_timeout", url=url)
-        return error_response(
-            "EXTRACTION_TIMEOUT",
-            "The source could not be processed before the timeout.",
-            504,
-            retryable=True,
-        )
-    except DownloadError as err:
-        code, message, retryable = classify_download_error(err)
-        log_event("extract_failed", url=url, code=code)
-        return error_response(code, message, 502 if retryable else 422, retryable=retryable)
-    except Exception as err:  # unexpected extractor failure
-        log_event("extract_error", url=url, error=str(err))
-        return error_response("EXTRACTION_FAILED", "The source could not be processed.", 502, retryable=True)
+    event, is_leader = _acquire_leadership(key)
+    if not is_leader:
+        event.wait(EXTRACT_TIMEOUT_SECONDS)
+        cached = cache.get(key)
+        if cached is not None:
+            log_event("extract_coalesced", url=url)
+            return jsonify(cached)
+        # The leader's result never landed in a cache we can see (it failed,
+        # timed out, or - without Redis - ran in a different worker process):
+        # extract it ourselves rather than fail for no reason of our own.
+        event, is_leader = _acquire_leadership(key)
 
-    duration_ms = int((time.monotonic() - started) * 1000)
+    if is_leader:
+        try:
+            result = _extract_result(url)
+        except ExtractionFailure as failure:
+            return error_response(failure.code, failure.message, failure.status, retryable=failure.retryable)
+        finally:
+            _release_leadership(key, event)
+        cache.set(key, result, CACHE_TTL_SECONDS)
+        return jsonify(result)
 
-    if info is None:
-        return error_response("EXTRACTION_FAILED", "The source could not be processed.", 502, retryable=True)
-
-    if info.get("is_live"):
-        return error_response("UNSUPPORTED_SOURCE", "Live streams are not supported.", 422)
-
-    formats = [build_format_entry(f) for f in info.get("formats", []) if is_downloadable_format(f)]
-    if not formats:
-        return error_response("FORMAT_UNAVAILABLE", "No downloadable formats were found.", 422)
-
-    result = {
-        "id": info.get("id"),
-        "title": info.get("title"),
-        "duration": info.get("duration"),
-        "thumbnail": info.get("thumbnail"),
-        "uploader": info.get("uploader") or info.get("channel"),
-        "formats": formats,
-    }
-
-    cache.set(key, result, CACHE_TTL_SECONDS)
-    log_event("extract_completed", url=url, duration_ms=duration_ms, format_count=len(formats))
-    return jsonify(result)
+    # Lost the leadership race a second time (another request became leader
+    # between our check above and now) - vanishingly rare. Wait once more
+    # rather than looping.
+    event.wait(EXTRACT_TIMEOUT_SECONDS)
+    cached = cache.get(key)
+    if cached is not None:
+        return jsonify(cached)
+    return error_response(
+        "EXTRACTION_TIMEOUT", "The source could not be processed before the timeout.", 504, retryable=True
+    )
 
 
 def with_paging(result, offset, limit):
