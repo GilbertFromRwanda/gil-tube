@@ -25,7 +25,6 @@ bin/
 postgres_data/
 
 # IDE
-.vscode/
 .idea/
 
 # Claude Code local session state
@@ -39,3 +38,4 @@ postgres_data/
 
 # Built Android APK served by the web UI (see publish-apk.sh)
 web/app/
+config.bat
