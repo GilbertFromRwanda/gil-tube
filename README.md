@@ -76,9 +76,10 @@ This repository is intentionally a working foundation rather than a full product
 2. Paste a URL and click **Load** — this calls `POST /api/v1/preview`, which
    runs extraction without creating a job, so you can see what you're about
    to download first.
-3. Pick a format (or leave "Best available") and click **Download** — this
-   calls `POST /api/v1/jobs`, which creates the job and hands it to the
-   worker/downloader pipeline.
+3. Pick a format (or leave **Auto**, which times your connection and picks a
+   resolution it can keep up with — see "Auto download quality" below) and
+   click **Download** — this calls `POST /api/v1/jobs`, which creates the job
+   and hands it to the worker/downloader pipeline.
 4. The page polls `GET /api/v1/jobs/:id` and `GET /api/v1/jobs/:id/progress`
    once a second to show live status, a progress bar, and download speed.
 5. When the job reaches `COMPLETED`, a **Save file** link appears, backed by
@@ -110,6 +111,21 @@ the video, keeps going with the screen off, and moves through the queue when a
 track ends. The lock-screen buttons are play/pause and seek only (expo-audio
 does not offer next/previous there). Tests: `node scripts/test-web-queue.mjs`
 (web), `npm run test:queue` and `npm run test:handoff` in `mobile/`.
+
+## Auto download quality
+
+Both clients default the format picker to **Auto**: it times the connection to
+this server (`GET /api/v1/speedtest`, a few hundred KB of filler bytes,
+timed client-side) and picks the highest resolution that fetches at roughly
+twice real time or better for that video's length, using the format's real
+file size when known and a typical bitrate otherwise. A slow or flaky
+connection gets a small file that actually finishes; a fast one gets the best
+quality without asking. The result and the measured speed are shown under the
+picker, the speed reading is remembered for two minutes so repeat downloads
+don't re-test, and "Best available" is still there for the old
+largest-file-wins behaviour. Same logic on both clients (`web/index.html`,
+block "Auto quality"; `mobile/src/utils/autoFormat.ts`) - tests:
+`node scripts/test-web-autoformat.mjs`, `npm run test:auto` in `mobile/`.
 
 ## Getting the mobile app onto a phone
 

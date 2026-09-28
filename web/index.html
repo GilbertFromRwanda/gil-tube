@@ -620,6 +620,11 @@
         color: var(--muted);
         font-size: 0.88rem;
       }
+      .format-hint {
+        margin: 0.5rem 0 0;
+        font-size: 0.82rem;
+        color: var(--muted);
+      }
       .transport-row {
         display: flex;
         align-items: center;
@@ -853,6 +858,7 @@
                   <select id="formatSelect"></select>
                   <button id="downloadButton" type="button">Download</button>
                 </div>
+                <p id="formatHint" class="format-hint hidden"></p>
               </div>
             </div>
           </div>
@@ -1201,6 +1207,7 @@
       const previewSub = document.getElementById('previewSub');
       const formatSelect = document.getElementById('formatSelect');
       const downloadButton = document.getElementById('downloadButton');
+      const formatHint = document.getElementById('formatHint');
       const expandPreviewButton = document.getElementById('expandPreviewButton');
       const previewOverlay = document.getElementById('previewOverlay');
 
@@ -1831,6 +1838,187 @@
         updateQueueButtons();
       }
 
+      // ---- Auto quality: pick a download format that fits the connection
+      // The Picker/select value that means "choose for me". Mirrors
+      // mobile/src/utils/autoFormat.ts (pure logic there, tested the same way
+      // here: node scripts/test-web-autoformat.mjs) - keep the two in step.
+      const AUTO_FORMAT = '__auto__';
+
+      // A format is chosen only if fetching it takes at most this share of the
+      // connection's speed measured over the length of the video - i.e. it would
+      // arrive at about twice real time or better.
+      const SPEED_HEADROOM = 0.5;
+
+      // Rough bitrate of a YouTube video track by height, in Mbit/s, used when
+      // the exact file size isn't known.
+      const TYPICAL_VIDEO_MBPS = [
+        [144, 0.3], [240, 0.6], [360, 1], [480, 1.8], [720, 3.5], [1080, 6.5], [1440, 13], [2160, 30],
+      ];
+      const AUDIO_MBPS = 0.13; // the audio track that gets merged in
+
+      function typicalVideoMbps(height) {
+        let mbps = TYPICAL_VIDEO_MBPS[0][1];
+        for (const [h, rate] of TYPICAL_VIDEO_MBPS) {
+          if (height >= h) mbps = rate;
+        }
+        return mbps;
+      }
+
+      function hasAudioTrack(format) {
+        return !!format.audio_codec && format.audio_codec !== 'none';
+      }
+
+      // Mbit/s needed to fetch this format over the video's length.
+      function estimateMbps(format, durationSeconds) {
+        const audioExtra = hasAudioTrack(format) ? 0 : AUDIO_MBPS;
+        if (format.filesize && format.filesize > 0 && durationSeconds && durationSeconds > 0) {
+          return (format.filesize * 8) / durationSeconds / 1e6 + audioExtra;
+        }
+        return typicalVideoMbps(format.height || 0) + audioExtra;
+      }
+
+      // One format per resolution: prefer mp4 (plays everywhere), then the larger file.
+      function bestOfHeight(candidates) {
+        return candidates.reduce((best, f) => {
+          const bestMp4 = best.container === 'mp4';
+          const fMp4 = f.container === 'mp4';
+          if (fMp4 !== bestMp4) return fMp4 ? f : best;
+          return (f.filesize || 0) > (best.filesize || 0) ? f : best;
+        });
+      }
+
+      // The best video format that fits `mbps` (measured connection speed), or the
+      // smallest one if nothing does. null when the speed is unknown or there is no
+      // video format to choose from - the caller then falls back to "best available".
+      function chooseFormat(formats, mbps, durationSeconds) {
+        if (!mbps || !Number.isFinite(mbps) || mbps <= 0) return null;
+
+        const byHeight = new Map();
+        for (const f of formats || []) {
+          if (!f.id || !f.height || f.height <= 0) continue; // audio-only entries
+          const list = byHeight.get(f.height) || [];
+          list.push(f);
+          byHeight.set(f.height, list);
+        }
+        if (byHeight.size === 0) return null;
+
+        const budgetMbps = mbps * SPEED_HEADROOM;
+        const heights = [...byHeight.keys()].sort((a, b) => a - b);
+
+        // Start from the smallest (used if nothing fits), then take the highest that
+        // does. Every height is checked: with real file sizes a higher resolution can
+        // occasionally be the smaller download.
+        let chosen = null;
+        for (const h of heights) {
+          const format = bestOfHeight(byHeight.get(h));
+          const estimatedMbps = estimateMbps(format, durationSeconds);
+          if (chosen === null || estimatedMbps <= budgetMbps) {
+            chosen = { format, estimatedMbps, budgetMbps };
+          }
+        }
+        return chosen;
+      }
+
+      function formatMbps(mbps) {
+        if (mbps >= 100) return `${Math.round(mbps)} Mbps`;
+        return `${mbps >= 10 ? mbps.toFixed(0) : mbps.toFixed(1)} Mbps`;
+      }
+
+      // Turns a byte count and elapsed time into Mbit/s (null if either is unusable).
+      function mbpsFrom(bytes, ms) {
+        if (!(bytes > 0) || !(ms > 0)) return null;
+        return Math.min((bytes * 8) / (ms * 1000), 1000);
+      }
+
+      // Measures connection speed on demand, remembers the answer for a while (a
+      // speed test on every click would be wasteful and slow), and shares one test
+      // between callers that ask at the same time.
+      function createSpeedMeter(measure, now = Date.now, ttlMs = 2 * 60 * 1000) {
+        let cached = null;
+        let inflight = null;
+
+        const run = async () => {
+          try {
+            const sample = await measure();
+            const mbps = mbpsFrom(sample.bytes, sample.ms);
+            if (mbps !== null) cached = { mbps, at: now() };
+            return mbps;
+          } catch (err) {
+            return null; // offline / server unreachable: caller falls back
+          }
+        };
+
+        return {
+          get() {
+            if (cached && now() - cached.at < ttlMs) return Promise.resolve(cached.mbps);
+            if (!inflight) {
+              inflight = run().finally(() => {
+                inflight = null;
+              });
+            }
+            return inflight;
+          },
+          last: () => (cached ? cached.mbps : null),
+        };
+      }
+
+      // How fast can this browser pull data from the server right now? Times a
+      // short download of filler bytes (timing starts once the response begins,
+      // so the round trip doesn't count against the speed).
+      async function timeSpeedTest(bytes = 768 * 1024, timeoutMs = 5000) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+          const response = await fetch(`${API_BASE}/api/v1/speedtest?bytes=${bytes}`, { signal: controller.signal });
+          const bodyStarted = Date.now();
+          const body = await response.arrayBuffer();
+          return { bytes: body.byteLength, ms: Math.max(1, Date.now() - bodyStarted) };
+        } catch (err) {
+          if (controller.signal.aborted) return { bytes, ms: timeoutMs };
+          throw err;
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+
+      // One shared meter: the answer is remembered for a couple of minutes.
+      const speedMeter = createSpeedMeter(() => timeSpeedTest());
+
+      // The formats and duration of whatever is in the preview right now, so the
+      // download handler and the hint can resolve "Auto" without re-fetching.
+      let currentFormats = [];
+      let currentDurationSeconds = null;
+      let autoMbps = null;
+
+      function updateFormatHint() {
+        if (formatSelect.value !== AUTO_FORMAT) {
+          formatHint.classList.add('hidden');
+          return;
+        }
+        formatHint.classList.remove('hidden');
+        const pick = chooseFormat(currentFormats, autoMbps, currentDurationSeconds);
+        if (autoMbps !== null) {
+          formatHint.textContent = `Your connection to the server: about ${formatMbps(autoMbps)}.${
+            pick ? ` Downloads ${formatLabel(pick.format)}.` : ''
+          }`;
+        } else {
+          formatHint.textContent = 'Checking how fast your connection is…';
+        }
+      }
+
+      // Runs once formats are shown, so "Auto" can say what it will pick.
+      function testConnectionSpeed() {
+        updateFormatHint();
+        speedMeter.get().then((mbps) => {
+          autoMbps = mbps;
+          if (mbps === null) formatHint.textContent = "Couldn't test the connection, so the best available quality is used.";
+          else updateFormatHint();
+        });
+      }
+
+      formatSelect.addEventListener('change', updateFormatHint);
+      // ---- end auto quality
+
       // ---- Play queue: next / previous / autoplay
       // The queue is the list of results the playing video came from, and it
       // grows as the endless feed loads more. If a different search replaces
@@ -2051,11 +2239,19 @@
         previewCard.classList.remove('hidden');
       }
 
-      function populateFormatOptions(formats) {
-        const filtered = (formats || []).filter((f) => f.id && (f.height || f.container));
+      function populateFormatOptions(formats, durationSeconds) {
+        currentFormats = formats || [];
+        currentDurationSeconds = durationSeconds ?? null;
+        autoMbps = speedMeter.last();
+
+        const filtered = currentFormats.filter((f) => f.id && (f.height || f.container));
         filtered.sort((a, b) => (b.height || 0) - (a.height || 0));
 
         formatSelect.innerHTML = '';
+        const autoOption = document.createElement('option');
+        autoOption.value = AUTO_FORMAT;
+        autoOption.textContent = 'Auto (fits your connection)';
+        formatSelect.appendChild(autoOption);
         const bestOption = document.createElement('option');
         bestOption.value = '';
         bestOption.textContent = 'Best available';
@@ -2066,11 +2262,13 @@
           option.textContent = formatLabel(format);
           formatSelect.appendChild(option);
         }
+        formatSelect.value = AUTO_FORMAT;
+        testConnectionSpeed();
       }
 
       function renderPreview(info) {
         renderPreviewShell(info);
-        populateFormatOptions(info.formats);
+        populateFormatOptions(info.formats, info.duration);
       }
 
       downloadButton.addEventListener('click', async () => {
@@ -2079,10 +2277,17 @@
         downloadButton.textContent = 'Starting…';
 
         try {
+          let format = formatSelect.value || undefined;
+          if (formatSelect.value === AUTO_FORMAT) {
+            // Use the latest speed reading; if it can't be measured, fall back to
+            // the server's own "best available".
+            autoMbps = await speedMeter.get();
+            format = chooseFormat(currentFormats, autoMbps, currentDurationSeconds)?.format.id;
+          }
           const response = await fetch(`${API_BASE}/api/v1/jobs`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url: currentURL, format: formatSelect.value || undefined }),
+            body: JSON.stringify({ url: currentURL, format }),
           });
           const data = await response.json();
 
