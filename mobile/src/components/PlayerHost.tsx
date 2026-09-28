@@ -147,6 +147,10 @@ export function PlayerHost() {
             title: video.title,
             artist: video.uploader ?? undefined,
             artworkUrl: video.thumbnail ?? undefined,
+            // A hint for the notification's progress bar: the player itself only
+            // learns the real duration once it has parsed enough of the stream,
+            // which can be well after the notification first appears.
+            durationMs: video.duration ? video.duration * 1000 : undefined,
           };
           if (lockScreenActive.current) {
             // Already showing controls: just change the track's text.
