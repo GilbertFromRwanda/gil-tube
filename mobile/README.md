@@ -78,7 +78,12 @@ The address is saved locally (AsyncStorage) and reused on future launches.
   project is generated (each EAS build), so they are offered and presses reach
   JS as a `remoteCommand` event (handled in `PlayerHost`). It fails the build if
   expo-audio's code no longer matches, e.g. after an upgrade - update the
-  plugin then. Not active in Expo Go.
+  plugin then. Not active in Expo Go. **Needs** `expo.autolinking.android.
+  buildFromSource: ["expo-audio"]` in `package.json` (already there) - Expo
+  otherwise links a precompiled AAR of expo-audio and this file is never
+  actually compiled, so the edit silently has no effect (`./gradlew projects`
+  is how to check: expo-audio should be a real, local project, not missing from
+  the list).
 - `src/utils/autoFormat.ts` — **Auto download quality.** The format picker
   defaults to Auto: times the connection (`GET /api/v1/speedtest`) and picks
   the highest resolution that fits it (real file size when known, typical
